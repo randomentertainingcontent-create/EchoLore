@@ -1,0 +1,69 @@
+// EchoLore — Local preview schema (Prisma + SQLite)
+// Production: see supabase/schema.sql (PostgreSQL + pgvector).
+// The data model mirrors the production schema 1:1 so swapping layers is mechanical.
+// SQLite has no native vector type, so embeddings are stored as JSON (Float[])
+// and cosine similarity is computed in application code (see src/lib/rag/local-vector.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Campaign {
+  id               String       @id @default(cuid())
+  userId           String
+  title            String
+  worldDescription String
+  userPersona      String
+  aiPersona        String
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  messages         Message[]
+  embeddings       Embedding[]
+  worldState       WorldState?
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  campaignId  String
+  role        String   // 'user' | 'assistant' | 'system'
+  content     String
+  createdAt   DateTime @default(now())
+
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  embedding   Embedding?
+
+  @@index([campaignId, createdAt])
+}
+
+model Embedding {
+  id          String   @id @default(cuid())
+  messageId   String   @unique
+  campaignId  String
+  content     String
+  // Stored as JSON-serialized number[] in SQLite.
+  // In production this is a vector(1536) column with pgvector.
+  vector      String
+  createdAt   DateTime @default(now())
+
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+model WorldState {
+  campaignId String   @id
+  stateJson  String   // JSONB in production; JSON string in SQLite
+  updatedAt  DateTime @updatedAt
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
