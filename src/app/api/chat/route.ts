@@ -181,7 +181,13 @@ export async function POST(req: NextRequest) {
   const openrouter = createOpenRouter({ apiKey: headers["x-openrouter-key"] });
 
   const result = streamText({
-    model: openrouter(headers["x-chat-model"]),
+    model: openrouter(headers["x-chat-model"], {
+      // Strip reasoning tokens from the response. Some free models on
+      // OpenRouter (e.g. openai/gpt-oss-20b:free) are reasoning models —
+      // without this, their inner monologue leaks into the visible reply
+      // (e.g. "Need to respond as friend in world...Hey there!").
+      reasoning: { exclude: true },
+    }),
     system: compiled.system,
     messages: compiled.messages,
     temperature: 0.85,
@@ -298,7 +304,7 @@ ${recentChat}
 
   const openrouter = createOpenRouter({ apiKey });
   const { text } = await generateText({
-    model: openrouter(loreModel),
+    model: openrouter(loreModel, { reasoning: { exclude: true } }),
     prompt,
     temperature: 0.1,
     maxOutputTokens: 800,
