@@ -192,6 +192,9 @@ export async function POST(req: NextRequest) {
     messages: compiled.messages,
     temperature: 0.85,
     maxOutputTokens: 1024,
+    onError: (event) => {
+      console.error("[echolore] streamText error:", event.error);
+    },
   });
 
   // --- G. Persist the assistant reply after streaming completes ---

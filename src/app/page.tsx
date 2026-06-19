@@ -29,6 +29,15 @@ export default function Home() {
     if (ready && userId && activeId) hydrateActive(userId, activeId);
   }, [ready, userId, activeId, hydrateActive]);
 
+  // Listen for lorebook refresh events (fired by ChatWindow after streaming
+  // completes — the background lorebook updater may have modified world_state)
+  useEffect(() => {
+    if (!ready || !userId || !activeId) return;
+    const handler = () => hydrateActive(userId, activeId);
+    window.addEventListener("echolore:refresh-lorebook", handler);
+    return () => window.removeEventListener("echolore:refresh-lorebook", handler);
+  }, [ready, userId, activeId, hydrateActive]);
+
   // First-visit nudge: open Settings if no key set after hydration
   useEffect(() => {
     if (!mounted) return;

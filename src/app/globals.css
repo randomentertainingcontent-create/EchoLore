@@ -186,3 +186,32 @@
   50%      { opacity: 0.6; box-shadow: 0 0 0 6px oklch(0.74 0.18 55 / 0); }
 }
 .el-pulse-dot { animation: el-pulse 2.4s ease-in-out infinite; }
+
+/* ----- Game Master markdown rendering ----- */
+.gm-markdown p { margin-bottom: 0.5rem; }
+.gm-markdown p:last-child { margin-bottom: 0; }
+.gm-markdown strong { font-weight: 600; }
+.gm-markdown em { font-style: italic; }
+.gm-markdown ol, .gm-markdown ul { margin: 0.5rem 0; padding-left: 1.25rem; }
+.gm-markdown ol { list-style: decimal; }
+.gm-markdown ul { list-style: disc; }
+.gm-markdown li { margin: 0.25rem 0; }
+.gm-markdown code {
+  background: oklch(1 0 0 / 0.08);
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.85em;
+  font-family: var(--font-geist-mono);
+}
+.gm-markdown blockquote {
+  border-left: 2px solid oklch(0.74 0.18 55 / 0.4);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  font-style: italic;
+  opacity: 0.85;
+}
+.gm-markdown hr {
+  border: none;
+  border-top: 1px solid oklch(1 0 0 / 0.1);
+  margin: 0.75rem 0;
+}

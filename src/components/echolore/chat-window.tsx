@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -206,6 +207,24 @@ function ActiveChatInner({
     })),
   });
 
+  // Auto-refresh lorebook when streaming finishes (the background lorebook
+  // updater may have fired after the 4th message — re-fetch the world_state).
+  // Also refresh after a delay since the lorebook call is async.
+  const prevStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevStatus.current === "streaming" && status === "ready") {
+      // Stream just finished. Wait 3s for any background lorebook call to complete,
+      // then refresh the lorebook via the campaign store's hydrateActive.
+      const timer = setTimeout(() => {
+        // Trigger a re-fetch of the world_state by calling the lorebook endpoint
+        // and updating the store. We use a custom event so the parent page picks it up.
+        window.dispatchEvent(new CustomEvent("echolore:refresh-lorebook"));
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+    prevStatus.current = status;
+  }, [status]);
+
   // Auto-scroll to bottom on new messages
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -216,7 +235,16 @@ function ActiveChatInner({
 
   // --- Composer state ---
   const [input, setInput] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isStreaming = status === "streaming" || status === "submitted";
+
+  // Auto-grow the textarea with content
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 192)}px`;
+  }, [input]);
 
   const handleSubmit = useCallback(() => {
     const text = input.trim();
@@ -323,6 +351,7 @@ function ActiveChatInner({
       <div className="border-t border-border bg-card/60 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <Textarea
+            ref={textareaRef}
             placeholder={
               isStreaming
                 ? "The story is unfolding…"
@@ -333,7 +362,7 @@ function ActiveChatInner({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isStreaming}
-            className="min-h-[44px] max-h-48 flex-1 resize-none bg-background/60 text-sm"
+            className="min-h-[44px] max-h-48 flex-1 resize-none overflow-hidden bg-background/60 text-sm"
           />
           {isStreaming ? (
             <Button
@@ -355,7 +384,8 @@ function ActiveChatInner({
         </div>
         <div className="mx-auto mt-2 flex max-w-3xl items-center justify-between text-[10px] text-muted-foreground/60">
           <span>
-            {messages.length} messages this session
+            {initialMessages.length} saved messages
+            {messages.length !== initialMessages.length && ` · ${messages.length} in view`}
             {" · "}
             RAG: top 5 memories + last 5 working
           </span>
@@ -395,19 +425,49 @@ function MessageBubble({
     <li className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-lg px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
+          "max-w-[85%] rounded-lg px-4 py-2.5 text-sm leading-relaxed",
           isUser
-            ? "bg-primary text-primary-foreground"
+            ? "bg-primary text-primary-foreground whitespace-pre-wrap"
             : "bg-card border border-border text-card-foreground",
         )}
       >
         {!isUser && (
-          <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-[0.18em] text-primary">
+          <div className="mb-1.5 flex items-center gap-1 text-[10px] uppercase tracking-[0.18em] text-primary">
             <Flame className="h-3 w-3" /> Game Master
-            {streaming && <Loader2 className="ml-1 h-3 w-3 animate-spin" />}
+            {streaming && (
+              <span className="ml-1 flex items-center gap-1 normal-case tracking-normal text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span className="italic">narrating…</span>
+              </span>
+            )}
           </div>
         )}
-        {text || (isUser ? "" : "…")}
+        {isUser ? (
+          text
+        ) : (
+          <div className="gm-markdown">
+            {text ? (
+              <ReactMarkdown
+                components={{
+                  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                  em: ({ children }) => <em className="italic">{children}</em>,
+                  ol: ({ children }) => <ol className="mb-2 ml-5 list-decimal space-y-1">{children}</ol>,
+                  ul: ({ children }) => <ul className="mb-2 ml-5 list-disc space-y-1">{children}</ul>,
+                  li: ({ children }) => <li>{children}</li>,
+                  code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 text-xs">{children}</code>,
+                  blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/40 pl-3 italic text-muted-foreground">{children}</blockquote>,
+                }}
+              >
+                {text}
+              </ReactMarkdown>
+            ) : streaming ? (
+              <span className="text-muted-foreground italic">…</span>
+            ) : (
+              ""
+            )}
+          </div>
+        )}
       </div>
     </li>
   );

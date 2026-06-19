@@ -100,10 +100,13 @@ export const useCampaignStore = create<CampaignState>()(
     }),
     {
       name: "echolore-active-campaign",
-      // Persist ONLY activeId — the campaigns list gets re-fetched on mount,
-      // and activeWorldState gets re-hydrated via hydrateActive(). Persisting
-      // just the active ID means a page reload restores the user's last campaign.
-      partialize: (s) => ({ activeId: s.activeId }),
+      // Persist activeId AND campaigns so that on page reload:
+      //   1. activeId restores → the correct campaign is auto-selected
+      //   2. campaigns restores → activeCampaign is found immediately → no flash
+      //      of the welcome screen while fetchAll is in-flight
+      // activeWorldState is NOT persisted — it gets re-hydrated via hydrateActive()
+      // (which also picks up lorebook auto-updates from the background updater).
+      partialize: (s) => ({ activeId: s.activeId, campaigns: s.campaigns }),
     },
   ),
 );
