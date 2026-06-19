@@ -96,9 +96,11 @@ export async function POST(req: NextRequest) {
   const worldState = (ws?.state_json ?? null) as Record<string, unknown> | null;
 
   // --- A. Save user message ---
+  // Strip null bytes — they break JSON parsing downstream and the LLM API.
+  const cleanUserMessage = userMessage.replace(/\0/g, "");
   const { data: userMsg, error: mErr } = await supabase
     .from("messages")
-    .insert({ campaign_id: campaignId, role: "user", content: userMessage })
+    .insert({ campaign_id: campaignId, role: "user", content: cleanUserMessage })
     .select("id, campaign_id, role, content, created_at")
     .single();
 
@@ -112,12 +114,12 @@ export async function POST(req: NextRequest) {
     userEmbedding = await generateEmbedding(
       headers["x-openrouter-key"],
       headers["x-embed-model"],
-      userMessage,
+      cleanUserMessage,
     );
     await supabase.from("embeddings").insert({
       message_id: userMsg.id,
       campaign_id: campaignId,
-      content: userMessage,
+      content: cleanUserMessage,
       embedding: userEmbedding,
     });
   } catch (e) {
@@ -174,7 +176,7 @@ export async function POST(req: NextRequest) {
     worldState,
     memories,
     workingMemory,
-    userMessage,
+    userMessage: cleanUserMessage,
   });
 
   // --- F. streamText via Vercel AI SDK + OpenRouter ---
@@ -192,8 +194,20 @@ export async function POST(req: NextRequest) {
     messages: compiled.messages,
     temperature: 0.85,
     maxOutputTokens: 1024,
-    onError: (event) => {
+    onError: async (event) => {
       console.error("[echolore] streamText error:", event.error);
+      // CRITICAL: If the stream fails (e.g. OpenRouter 429 rate limit, invalid
+      // key, network error), the user message is already saved to the DB but
+      // no assistant reply will follow. This leaves an ORPHANED user message
+      // that reappears on reload with no AI response. Delete it + its embedding
+      // so the DB stays clean and the user can retry cleanly.
+      try {
+        await supabase.from("embeddings").delete().eq("message_id", userMsg.id);
+        await supabase.from("messages").delete().eq("id", userMsg.id);
+        console.log("[echolore] cleaned up orphaned user message:", userMsg.id);
+      } catch (cleanupErr) {
+        console.error("[echolore] failed to clean up orphaned message:", (cleanupErr as Error).message);
+      }
     },
   });
 

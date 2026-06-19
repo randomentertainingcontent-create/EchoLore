@@ -103,6 +103,18 @@ export async function POST(req: NextRequest) {
     const stateJson = startingState && Object.keys(startingState).length > 0
       ? startingState
       : {};
+
+    // Validate starting state is a plain object (not array/primitive/null).
+    // Supabase JSONB accepts any JSON, but our schema expects an object.
+    if (startingState != null) {
+      if (typeof startingState !== "object" || Array.isArray(startingState)) {
+        return NextResponse.json(
+          { error: "Starting state must be a JSON object (e.g. {\"location\": \"...\"}), not an array or primitive." },
+          { status: 400 },
+        );
+      }
+    }
+
     const { error: wsErr } = await supabase
       .from("world_state")
       .insert({

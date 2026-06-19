@@ -65,6 +65,17 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const { id } = await params;
     const supabase = serverAdmin();
 
+    // Check ownership FIRST — Supabase delete is idempotent (returns 200 even
+    // if 0 rows were deleted), so we need to verify the row exists + is owned
+    // by the user before deleting, otherwise we'd return 200 for nonexistent IDs.
+    const { data: owned } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
     const { error } = await supabase
       .from("campaigns")
       .delete()
