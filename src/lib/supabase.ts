@@ -10,24 +10,28 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
  *   - browser: uses the anon key, subject to RLS. Used in client components.
  *     The key is safe to expose (NEXT_PUBLIC_).
  *
+ * IMPORTANT: All env var reads are INSIDE the functions (lazy), not at module
+ * top-level. This is critical for Vercel — Next.js evaluates route modules at
+ * build time during page-data collection, and throwing at module load breaks
+ * the build even when env vars are set in the Vercel project. Lazy evaluation
+ * means the throw only happens when a route is actually called at runtime.
+ *
  * For the local preview we use the same Supabase project as production —
  * there is no separate local DB. Create a free Supabase project, run
  * supabase/schema.sql in the SQL editor, and paste your URL + keys into .env.
  */
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!SUPABASE_URL) {
-  throw new Error(
-    "NEXT_PUBLIC_SUPABASE_URL is not set. Create a free Supabase project at " +
-    "https://supabase.com/dashboard, run supabase/schema.sql in the SQL editor, " +
-    "and paste your project URL into .env"
-  );
-}
-if (!ANON_KEY) {
-  throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY is not set. See .env.example.");
+function getEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || !v.trim()) {
+    throw new Error(
+      `${name} is not set. Create a free Supabase project at ` +
+      "https://supabase.com/dashboard, run supabase/schema.sql in the SQL editor, " +
+      "and paste your project URL + keys into .env (locally) or Vercel env vars " +
+      "(production). See .env.example for the full list."
+    );
+  }
+  return v.trim();
 }
 
 /**
@@ -41,14 +45,9 @@ if (!ANON_KEY) {
 let _serverAdmin: SupabaseClient | null = null;
 export function serverAdmin(): SupabaseClient {
   if (!_serverAdmin) {
-    if (!SERVICE_ROLE_KEY) {
-      throw new Error(
-        "SUPABASE_SERVICE_ROLE_KEY is not set. Server-side route handlers need " +
-        "this to bypass RLS until Supabase Auth is wired up. Find it at " +
-        "Supabase dashboard → Project Settings → API → service_role secret."
-      );
-    }
-    _serverAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+    const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+    _serverAdmin = createClient(url, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
@@ -57,7 +56,9 @@ export function serverAdmin(): SupabaseClient {
 
 /** Browser-side client. Uses anon key, subject to RLS. */
 export function browserClient(): SupabaseClient {
-  return createClient(SUPABASE_URL, ANON_KEY, {
+  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const anonKey = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  return createClient(url, anonKey, {
     auth: { persistSession: true },
   });
 }

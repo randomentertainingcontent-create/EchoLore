@@ -27,49 +27,49 @@ export const dynamic = "force-dynamic";
  *   H. If (campaign message count) % 4 === 0, fire background lorebook sync
  */
 export async function POST(req: NextRequest) {
-  const headers = readByokHeaders(req.headers);
-  const userId = headers["x-user-id"];
-
-  let body: {
-    campaignId?: string;
-    message?: string;
-    messages?: { role: string; content?: string; parts?: { type: string; text?: string }[] }[];
-  };
   try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+    const headers = readByokHeaders(req.headers);
+    const userId = headers["x-user-id"];
 
-  const { campaignId, message, messages } = body;
-  if (!campaignId) {
-    return Response.json(
-      { error: "campaignId is required in the request body" },
-      { status: 400 },
-    );
-  }
-
-  // Extract the user's current message. AI SDK 6's useChat sends the full
-  // message history in `messages` — the last one is the user's new input.
-  // We also accept a top-level `message` field for direct API calls.
-  let userMessage = message?.trim();
-  if (!userMessage && messages && messages.length > 0) {
-    const last = messages[messages.length - 1];
-    if (last?.role === "user") {
-      // AI SDK 6 uses `parts` (array of {type, text}) for content
-      userMessage = last.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text ?? "")
-        .join("")
-        .trim() || last.content?.trim();
+    let body: {
+      campaignId?: string;
+      message?: string;
+      messages?: { role: string; content?: string; parts?: { type: string; text?: string }[] }[];
+    };
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON body" }, { status: 400 });
     }
-  }
-  if (!userMessage) {
-    return Response.json(
-      { error: "No user message found in request (neither `message` nor last `messages[]` entry)" },
-      { status: 400 },
-    );
-  }
+
+    const { campaignId, message, messages } = body;
+    if (!campaignId) {
+      return Response.json(
+        { error: "campaignId is required in the request body" },
+        { status: 400 },
+      );
+    }
+
+    // Extract the user's current message. AI SDK 6's useChat sends the full
+    // message history in `messages` — the last one is the user's new input.
+    // We also accept a top-level `message` field for direct API calls.
+    let userMessage = message?.trim();
+    if (!userMessage && messages && messages.length > 0) {
+      const last = messages[messages.length - 1];
+      if (last?.role === "user") {
+        userMessage = last.parts
+          ?.filter((p) => p.type === "text")
+          .map((p) => p.text ?? "")
+          .join("")
+          .trim() || last.content?.trim();
+      }
+    }
+    if (!userMessage) {
+      return Response.json(
+        { error: "No user message found in request (neither `message` nor last `messages[]` entry)" },
+        { status: 400 },
+      );
+    }
 
   const supabase = serverAdmin();
 
@@ -241,6 +241,10 @@ export async function POST(req: NextRequest) {
   })();
 
   return result.toUIMessageStreamResponse();
+  } catch (e) {
+    console.error("[echolore] POST /api/chat failed:", (e as Error).message);
+    return Response.json({ error: (e as Error).message }, { status: 500 });
+  }
 }
 
 /**

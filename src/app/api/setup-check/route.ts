@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { serverAdmin } from "@/lib/supabase";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/setup-check
  * Verifies that the Supabase schema is installed by trying to query the
@@ -10,8 +13,6 @@ import { serverAdmin } from "@/lib/supabase";
 export async function GET() {
   try {
     const supabase = serverAdmin();
-    // Use a real (non-head) select so Supabase returns the actual error
-    // rather than swallowing it. Limit 1 to keep it cheap.
     const { error } = await supabase
       .from("campaigns")
       .select("id")
@@ -23,7 +24,7 @@ export async function GET() {
         schemaInstalled: false,
         error: error.message,
         hint: "Run supabase/schema.sql in your Supabase SQL editor (Dashboard → SQL Editor → New query → paste the file → Run).",
-      }, { status: 200 }); // 200 so the frontend can read the body
+      }, { status: 200 });
     }
 
     return NextResponse.json({
@@ -35,7 +36,7 @@ export async function GET() {
       ok: false,
       schemaInstalled: false,
       error: (e as Error).message,
-      hint: "Make sure NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY are set in .env",
+      hint: "Make sure NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY are set in .env (local) or Vercel env vars (production).",
     }, { status: 200 });
   }
 }
