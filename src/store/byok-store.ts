@@ -11,11 +11,15 @@ import type { ByokConfig } from "@/types/echolore";
 //
 // Sign up at https://openrouter.ai/keys — generous free tier, no credit card
 // required to start.
+//
+// Defaults: gpt-oss-20b:free is a reasoning model that's reliably available on
+// the free tier. Embeddings use OpenAI's text-embedding-3-small (1536-dim)
+// routed via OpenRouter — matches the vector(N) column in supabase/schema.sql.
 export const DEFAULT_BYOK: ByokConfig = {
   openrouterKey: "",
-  chatModel: "meta-llama/llama-3.2-3b-instruct:free",  // free, good for roleplay
-  loreModel: "meta-llama/llama-3.2-3b-instruct:free",  // free, fast for lorebook
-  embedModel: "text-embedding-3-small",                 // OpenAI via OpenRouter, 1536-dim
+  chatModel: "openai/gpt-oss-20b:free",
+  loreModel: "openai/gpt-oss-20b:free",
+  embedModel: "text-embedding-3-small",
   embedDimensions: 1536,
 };
 

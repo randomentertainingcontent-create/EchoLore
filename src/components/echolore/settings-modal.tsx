@@ -156,10 +156,11 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               Reset chat/lore to defaults
             </button>
             <p className="text-[11px] text-muted-foreground/80">
-              Defaults use free-tier Llama 3.2 3B. Try
-              <code className="mx-1 text-foreground">openai/gpt-4o-mini</code>
-              or
+              Defaults use <code className="text-foreground">openai/gpt-oss-20b:free</code> (free
+              tier, reasoning model). Try
               <code className="mx-1 text-foreground">anthropic/claude-3.5-sonnet</code>
+              or
+              <code className="mx-1 text-foreground">openai/gpt-4o-mini</code>
               for higher quality. Browse all models at openrouter.ai/models.
               Embeddings default to OpenAI&apos;s <code className="text-foreground">text-embedding-3-small</code> (1536-dim — matches the schema).
             </p>

@@ -30,17 +30,43 @@ export async function POST(req: NextRequest) {
   const headers = readByokHeaders(req.headers);
   const userId = headers["x-user-id"];
 
-  let body: { campaignId?: string; message?: string };
+  let body: {
+    campaignId?: string;
+    message?: string;
+    messages?: { role: string; content?: string; parts?: { type: string; text?: string }[] }[];
+  };
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { campaignId, message } = body;
-  if (!campaignId || !message?.trim()) {
+  const { campaignId, message, messages } = body;
+  if (!campaignId) {
     return Response.json(
-      { error: "Both campaignId and message are required" },
+      { error: "campaignId is required in the request body" },
+      { status: 400 },
+    );
+  }
+
+  // Extract the user's current message. AI SDK 6's useChat sends the full
+  // message history in `messages` — the last one is the user's new input.
+  // We also accept a top-level `message` field for direct API calls.
+  let userMessage = message?.trim();
+  if (!userMessage && messages && messages.length > 0) {
+    const last = messages[messages.length - 1];
+    if (last?.role === "user") {
+      // AI SDK 6 uses `parts` (array of {type, text}) for content
+      userMessage = last.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text ?? "")
+        .join("")
+        .trim() || last.content?.trim();
+    }
+  }
+  if (!userMessage) {
+    return Response.json(
+      { error: "No user message found in request (neither `message` nor last `messages[]` entry)" },
       { status: 400 },
     );
   }
@@ -72,7 +98,7 @@ export async function POST(req: NextRequest) {
   // --- A. Save user message ---
   const { data: userMsg, error: mErr } = await supabase
     .from("messages")
-    .insert({ campaign_id: campaignId, role: "user", content: message.trim() })
+    .insert({ campaign_id: campaignId, role: "user", content: userMessage })
     .select("id, campaign_id, role, content, created_at")
     .single();
 
@@ -86,12 +112,12 @@ export async function POST(req: NextRequest) {
     userEmbedding = await generateEmbedding(
       headers["x-openrouter-key"],
       headers["x-embed-model"],
-      message.trim(),
+      userMessage,
     );
     await supabase.from("embeddings").insert({
       message_id: userMsg.id,
       campaign_id: campaignId,
-      content: message.trim(),
+      content: userMessage,
       embedding: userEmbedding,
     });
   } catch (e) {
@@ -148,7 +174,7 @@ export async function POST(req: NextRequest) {
     worldState,
     memories,
     workingMemory,
-    userMessage: message.trim(),
+    userMessage,
   });
 
   // --- F. streamText via Vercel AI SDK + OpenRouter ---
