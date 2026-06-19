@@ -131,6 +131,20 @@ const PRESETS: Preset[] = [
   },
 ];
 
+/** Count words in a string (whitespace-separated). */
+function wordCount(s: string): number {
+  const t = s.trim();
+  if (!t) return 0;
+  return t.split(/\s+/).length;
+}
+
+/** Returns "thin" if the field has too few words to give the AI useful context. */
+function fieldThickness(words: number, min: number): "empty" | "thin" | "ok" {
+  if (words === 0) return "empty";
+  if (words < min) return "thin";
+  return "ok";
+}
+
 export function NewCampaignModal({ open, onOpenChange, onCreated }: NewCampaignModalProps) {
   const { userId } = useMockUser();
   const create = useCampaignStore((s) => s.create);
@@ -186,6 +200,22 @@ export function NewCampaignModal({ open, onOpenChange, onCreated }: NewCampaignM
     if (!form.title.trim() || !form.worldDescription.trim() || !form.userPersona.trim() || !form.aiPersona.trim()) {
       toast({ title: "Missing fields", description: "Title, World Description, User Persona, and AI Persona are all required.", variant: "destructive" });
       return;
+    }
+
+    // Thin-prompt warning (non-blocking — user can still proceed)
+    const worldWords = wordCount(form.worldDescription);
+    const userWords = wordCount(form.userPersona);
+    const aiWords = wordCount(form.aiPersona);
+    if (worldWords < 15 || userWords < 10 || aiWords < 10) {
+      const proceed = confirm(
+        "Your world/persona descriptions are quite short. The AI may improvise a setting " +
+        "that doesn't match what you imagined.\n\n" +
+        `World: ${worldWords} words (recommend 15+)\n` +
+        `User persona: ${userWords} words (recommend 10+)\n` +
+        `AI persona: ${aiWords} words (recommend 10+)\n\n` +
+        "Continue anyway?",
+      );
+      if (!proceed) return;
     }
 
     const parsedState = validateState(stateText);
@@ -286,53 +316,71 @@ export function NewCampaignModal({ open, onOpenChange, onCreated }: NewCampaignM
 
           {/* World description */}
           <div className="grid gap-2">
-            <Label htmlFor="nc-world">
-              World Description <span className="text-primary">*</span>
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="nc-world">
+                World Description <span className="text-primary">*</span>
+              </Label>
+              <FieldCounter words={wordCount(form.worldDescription)} min={15} />
+            </div>
             <Textarea
               id="nc-world"
               rows={4}
-              placeholder="A cyberpunk city ruled by megacorps…  /  A medieval fantasy world with dragons…"
+              placeholder="A cyberpunk city ruled by megacorps where the rain never stops…  /  A modern high school in a quiet suburb…  /  A starship on a 200-year voyage…"
               value={form.worldDescription}
               onChange={(e) => update("worldDescription", e.target.value)}
             />
-            <p className="text-xs text-muted-foreground">
-              Define the universe. Tone, setting, time period, key factions, the rules of magic or tech.
-            </p>
+            <FieldHint
+              words={wordCount(form.worldDescription)}
+              min={15}
+              ok="Define the universe — tone, setting, time period, key factions, rules of magic or tech."
+              thin="Too thin — the AI will have to guess the setting. Add a sentence or two about WHERE and WHEN this takes place."
+            />
           </div>
 
           {/* Personas — two columns on md+ */}
           <div className="grid gap-5 md:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor="nc-user">
-                Your Persona <span className="text-primary">*</span>
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="nc-user">
+                  Your Persona <span className="text-primary">*</span>
+                </Label>
+                <FieldCounter words={wordCount(form.userPersona)} min={10} />
+              </div>
               <Textarea
                 id="nc-user"
                 rows={4}
-                placeholder="I am a rogue hacker with a cybernetic arm…  /  I am a humble farmer who found a magic sword…"
+                placeholder="I'm a 16-year-old high school student who loves sci-fi and is shy around new people…  /  I am a rogue hacker with a cybernetic arm…  /  I am a humble farmer who found a magic sword…"
                 value={form.userPersona}
                 onChange={(e) => update("userPersona", e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
-                Who are <em>you</em>? Background, skills, secrets, motivations.
-              </p>
+              <FieldHint
+                words={wordCount(form.userPersona)}
+                min={10}
+                ok="Who are you? Background, age, skills, personality, motivations."
+                thin="Too thin — give the AI something to work with. Age, personality, what you look like, what you care about."
+              />
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="nc-ai">
-                AI Persona / Role <span className="text-primary">*</span>
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="nc-ai">
+                  AI Persona / Role <span className="text-primary">*</span>
+                </Label>
+                <FieldCounter words={wordCount(form.aiPersona)} min={10} />
+              </div>
               <Textarea
                 id="nc-ai"
                 rows={4}
-                placeholder="You are the Game Master. Describe the environment and control all NPCs…"
+                placeholder="You are my best friend, casual and joking, we hang out after school…  /  You are the Game Master. Describe the environment and control all NPCs…"
                 value={form.aiPersona}
                 onChange={(e) => update("aiPersona", e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
-                What should the AI <em>do</em>? Tone, narrative duties, NPC behavior.
-              </p>
+              <FieldHint
+                words={wordCount(form.aiPersona)}
+                min={10}
+                ok="What should the AI do? Tone, narrative duties, NPC behavior."
+                thin="Too thin — describe HOW the AI should act. Friendly? Mysterious? Hostile? What's their voice?"
+              />
             </div>
           </div>
 
@@ -394,5 +442,42 @@ function Flame({ className }: { className?: string }) {
       <path d="M12 2 C 13.5 5, 17 7, 17 12 C 17 15.5, 14.8 18, 12 18 C 9.2 18, 7 15.5, 7 12 C 7 9.5, 9 8, 10 6 C 10.5 4.5, 11 3, 12 2 Z" />
       <ellipse cx="12" cy="14" rx="2.2" ry="3" opacity="0.4" fill="oklch(0.16 0.012 250)" />
     </svg>
+  );
+}
+
+/** Live word counter badge — green when OK, amber when thin, muted when empty. */
+function FieldCounter({ words, min }: { words: number; min: number }) {
+  const t = fieldThickness(words, min);
+  return (
+    <span
+      className={
+        "text-[10px] font-mono " +
+        (t === "ok"
+          ? "text-primary"
+          : t === "thin"
+            ? "text-amber-500 dark:text-amber-400"
+            : "text-muted-foreground/50")
+      }
+      title={t === "thin" ? `Need at least ${min} words for the AI to have good context` : undefined}
+    >
+      {words} / {min}+ words
+    </span>
+  );
+}
+
+/** Helper text below a field — shows the "thin" warning in amber when too short. */
+function FieldHint({
+  words, min, ok, thin,
+}: { words: number; min: number; ok: string; thin: string }) {
+  const t = fieldThickness(words, min);
+  return (
+    <p
+      className={
+        "text-xs " +
+        (t === "thin" ? "text-amber-500 dark:text-amber-400" : "text-muted-foreground")
+      }
+    >
+      {t === "thin" ? thin : ok}
+    </p>
   );
 }

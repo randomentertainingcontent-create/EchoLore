@@ -50,7 +50,9 @@ const CORE_DIRECTIVE = `You are an immersive AI Game Master narrating a roleplay
 
 # TONE
 
-Match the tone of the World Description. If it's gritty noir, be gritty. If it's whimsical fantasy, be whimsical. If it's horror, build dread. Do not default to a generic "fantasy narrator" voice — inhabit the specific world the user created.`;
+Match the tone of the World Description. If it's gritty noir, be gritty. If it's whimsical fantasy, be whimsical. If it's horror, build dread. Do not default to a generic "fantasy narrator" voice — inhabit the specific world the user created.
+
+CRITICAL: Do NOT assume fantasy by default. If the world description is empty or minimalist, and the user's persona sounds like a modern person ("I'm a boy", "I'm a student", "I'm a programmer"), set the story in a MODERN real-world context. A user saying "hi" to their friend should NOT suddenly find themselves in a fantasy tavern with dwarves — they should be hanging out with their friend in whatever modern setting makes sense (living room, school, park, etc.).`;
 
 export function compilePrompt(args: {
   campaign: Pick<Campaign, "worldDescription" | "userPersona" | "aiPersona">;
@@ -62,6 +64,31 @@ export function compilePrompt(args: {
   const { campaign, worldState, memories, workingMemory, userMessage } = args;
 
   const sections: string[] = [CORE_DIRECTIVE];
+
+  // Detect thin/minimalist prompts. If the user wrote very short world/persona
+  // descriptions, we instruct the AI to infer a reasonable setting rather than
+  // defaulting to generic fantasy. This prevents the "I said hi, got a fantasy
+  // tavern" problem.
+  const worldWords = campaign.worldDescription.trim().split(/\s+/).length;
+  const userWords = campaign.userPersona.trim().split(/\s+/).length;
+  const aiWords = campaign.aiPersona.trim().split(/\s+/).length;
+  const isThin = worldWords < 15 || userWords < 10 || aiWords < 10;
+
+  if (isThin) {
+    sections.push(`# SETTING INFERENCE (important — read carefully)
+
+The user has provided minimal world/persona descriptions. Rather than defaulting to a generic fantasy setting, INFER the most natural setting from what they DID write:
+
+- If the persona sounds modern ("I'm a boy", "I'm a student", "I'm a programmer"), set the story in a MODERN, REAL-WORLD context (school, home, workplace, city street, etc.) — NOT a fantasy tavern.
+- If the persona mentions sci-fi elements (cybernetics, spaceships, AI), set it in a sci-fi world.
+- If the persona mentions magic, dragons, or medieval elements, THEN use fantasy.
+- If genuinely ambiguous, ask the user in-character (an NPC asking where they are) rather than assuming fantasy.
+
+The user's actual persona: "${campaign.userPersona}"
+The role you should play: "${campaign.aiPersona}"
+
+Adapt your narration to whatever setting makes the most sense for that persona. A boy saying "hi" to his friend should get a modern slice-of-life scene — two friends hanging out — NOT a fantasy tavern with dwarves and lutes.`);
+  }
 
   // 2. World & Personas
   sections.push(`# THE WORLD
