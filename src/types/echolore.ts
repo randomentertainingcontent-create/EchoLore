@@ -30,14 +30,21 @@ export interface WorldState {
 
 // --- BYOK (Bring Your Own Key) ---
 
-// EchoLore is OpenAI-only: one key handles chat (gpt-4o-mini default),
-// lorebook updates (gpt-4o-mini), AND embeddings (text-embedding-3-small).
-// This keeps the UX dead-simple and the RAG dimension consistent at 1536.
+// EchoLore uses TWO keys:
+//   - OpenRouter (https://openrouter.ai) for chat + lorebook — one key gives
+//     access to hundreds of models including free ones.
+//   - Jina AI (https://jina.ai) for embeddings — free tier, 1024-dim by default.
+//
+// Why two keys? OpenRouter doesn't natively host an embeddings endpoint that's
+// both free and stable, so we route embeddings through Jina's generous free API.
+// Both keys live in localStorage only — never persisted server-side.
 export interface ByokConfig {
-  apiKey: string;
-  chatModel: string;
-  loreModel: string;   // cheap/fast model for the lorebook updater
-  embedModel: string;  // text-embedding-3-small (1536 dims)
+  openrouterKey: string;
+  jinaKey: string;
+  chatModel: string;     // OpenRouter model id, e.g. "meta-llama/llama-3.2-3b-instruct:free"
+  loreModel: string;     // OpenRouter model id (cheap/fast for lorebook updates)
+  embedModel: string;    // Jina model name, e.g. "jina-embeddings-v3"
+  embedDimensions: number; // Jina supports dimension truncation; we use 1024
 }
 
 // Form payload for the New Campaign setup modal
@@ -59,7 +66,7 @@ export interface RetrievedMemory {
 }
 
 export interface CompiledPrompt {
-  system: string;   // core directive + world + personas + world state + memories
+  system: string;
   // ModelMessage-shaped ({role, content}) — passed directly to streamText
-  messages: { role: MessageRole; content: string }[]; // working memory + user input
+  messages: { role: MessageRole; content: string }[];
 }
