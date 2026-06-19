@@ -13,7 +13,7 @@ import { useMounted } from "@/hooks/use-mounted";
 export default function Home() {
   const { userId, ready } = useMockUser();
   const { campaigns, activeId, activeWorldState, fetchAll, setActive, hydrateActive } = useCampaignStore();
-  const hasKey = useByokStore((s) => s.hasKey());
+  const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
   const mounted = useMounted();
 
   const [newOpen, setNewOpen] = useState(false);

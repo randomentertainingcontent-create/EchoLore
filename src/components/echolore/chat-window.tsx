@@ -26,8 +26,14 @@ export function ChatWindow({
   campaign, worldStateJson, onOpenSettings, onOpenNewCampaign,
 }: ChatWindowProps) {
   const { userId, ready } = useMockUser();
-  const hasKey = useByokStore((s) => s.hasKey());
-  const config = useByokStore((s) => s.config);
+  // Select the key string directly (not hasKey()) so the component re-renders
+  // when zustand-persist rehydrates the key from localStorage on page load.
+  const openrouterKey = useByokStore((s) => s.config.openrouterKey);
+  const chatModel = useByokStore((s) => s.config.chatModel);
+  const loreModel = useByokStore((s) => s.config.loreModel);
+  const embedModel = useByokStore((s) => s.config.embedModel);
+  const embedDimensions = useByokStore((s) => s.config.embedDimensions);
+  const hasKey = Boolean(openrouterKey.trim());
 
   if (!campaign) {
     return <EmptyChat onOpenNewCampaign={onOpenNewCampaign} onOpenSettings={onOpenSettings} />;
@@ -46,11 +52,11 @@ export function ChatWindow({
       worldStateJson={worldStateJson}
       userId={userId}
       ready={ready}
-      openrouterKey={config.openrouterKey}
-      chatModel={config.chatModel}
-      loreModel={config.loreModel}
-      embedModel={config.embedModel}
-      embedDimensions={config.embedDimensions}
+      openrouterKey={openrouterKey}
+      chatModel={chatModel}
+      loreModel={loreModel}
+      embedModel={embedModel}
+      embedDimensions={embedDimensions}
       onOpenSettings={onOpenSettings}
     />
   );
@@ -95,20 +101,21 @@ interface ActiveChatProps {
   onOpenSettings: () => void;
 }
 
-function ActiveChat({
-  campaign, worldStateJson, userId, ready,
-  openrouterKey, chatModel, loreModel, embedModel, embedDimensions,
-}: ActiveChatProps) {
-  // Initial state assumes loading — only set once per mount (which is once per
-  // campaign thanks to the `key={campaign.id}` on this component).
+/**
+ * Container: fetches the persisted message history, then renders ActiveChatInner
+ * ONLY after history is loaded. This is critical because @ai-sdk/react's useChat
+ * uses the `messages` prop as INITIAL state only — if we mount it before history
+ * is loaded, it initializes with `[]` and ignores the loaded messages forever.
+ *
+ * By splitting into container + inner, we guarantee useChat initializes with
+ * the full history on first mount, so reloads restore the conversation.
+ */
+function ActiveChat(props: ActiveChatProps) {
+  const { campaign, userId, ready } = props;
   const [history, setHistory] = useState<Message[]>([]);
-  const [historyStatus, setHistoryStatus] = useState<"loading" | "ready" | "error">(
-    () => (ready && userId ? "loading" : "loading"),
-  );
+  const [historyStatus, setHistoryStatus] = useState<"loading" | "ready" | "error">("loading");
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [showState, setShowState] = useState(false);
 
-  // --- Load persisted history on mount / when user becomes ready ---
   useEffect(() => {
     if (!ready || !userId) return;
     let cancelled = false;
@@ -129,6 +136,47 @@ function ActiveChat({
     return () => { cancelled = true; };
   }, [ready, userId, campaign.id]);
 
+  if (historyStatus === "loading") {
+    return (
+      <div className="el-ember-bg flex h-full items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Loading the story so far…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (historyStatus === "error") {
+    return (
+      <div className="el-ember-bg flex h-full items-center justify-center px-6">
+        <div className="mx-auto max-w-md rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">Failed to load messages</div>
+              <div className="mt-1 text-xs opacity-80">{historyError}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <ActiveChatInner {...props} initialMessages={history} />;
+}
+
+interface ActiveChatInnerProps extends ActiveChatProps {
+  initialMessages: Message[];
+}
+
+function ActiveChatInner({
+  campaign, worldStateJson, userId,
+  openrouterKey, chatModel, loreModel, embedModel, embedDimensions,
+  initialMessages,
+}: ActiveChatInnerProps) {
+  const [showState, setShowState] = useState(false);
+
   // --- Build the transport with BYOK headers ---
   const transport = useMemo(() => {
     if (!userId) return null;
@@ -146,9 +194,12 @@ function ActiveChat({
     });
   }, [userId, openrouterKey, chatModel, loreModel, embedModel, embedDimensions, campaign.id]);
 
+  // useChat is now called with initialMessages ALREADY loaded — so the hook
+  // initializes with the full history. This is what makes page reloads restore
+  // the conversation.
   const { messages, sendMessage, status, error, stop, regenerate } = useChat({
     transport: transport ?? undefined,
-    messages: history.map((m) => ({
+    messages: initialMessages.map((m) => ({
       id: m.id,
       role: m.role,
       parts: [{ type: "text", text: m.content }],
@@ -243,22 +294,7 @@ function ActiveChat({
       {/* Chat body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto el-scroll">
         <div className="mx-auto max-w-3xl px-4 py-6">
-          {historyStatus === "loading" ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
-              Loading the story so far…
-            </div>
-          ) : historyStatus === "error" ? (
-            <div className="mx-auto max-w-md rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div>
-                  <div className="font-medium">Failed to load messages</div>
-                  <div className="mt-1 text-xs opacity-80">{historyError}</div>
-                </div>
-              </div>
-            </div>
-          ) : messages.length === 0 ? (
+          {messages.length === 0 ? (
             <EmptyConversation campaign={campaign} />
           ) : (
             <ul className="flex flex-col gap-4 pb-4">

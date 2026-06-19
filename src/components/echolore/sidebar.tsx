@@ -28,7 +28,7 @@ interface SidebarProps {
 export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
   const { userId, ready } = useMockUser();
   const { campaigns, activeId, fetchAll, remove, setActive, loading } = useCampaignStore();
-  const hasKey = useByokStore((s) => s.hasKey());
+  const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
   const hydrated = useMounted();
 
   useEffect(() => {
