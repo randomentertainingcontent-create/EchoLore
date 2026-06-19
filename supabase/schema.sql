@@ -29,9 +29,12 @@ end$$;
 -- ============================================================================
 
 -- campaigns: one per "world" a user creates
+-- NOTE: user_id is a plain uuid (no FK to auth.users) so EchoLore can use
+-- mock single-user UUIDs without requiring Supabase Auth setup. When you wire
+-- up real Supabase Auth, run supabase/patch-add-auth-fk.sql to restore the FK.
 create table if not exists public.campaigns (
   id                 uuid primary key default gen_random_uuid(),
-  user_id            uuid not null references auth.users (id) on delete cascade,
+  user_id            uuid not null,  -- mock UUID (no FK until auth is wired)
   title              text not null,
   world_description  text not null,
   user_persona       text not null,
