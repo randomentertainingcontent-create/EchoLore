@@ -13,7 +13,7 @@ import { useMounted } from "@/hooks/use-mounted";
 export default function Home() {
   const { userId, ready } = useMockUser();
   const { campaigns, activeId, activeWorldState, fetchAll, setActive, hydrateActive } = useCampaignStore();
-  const hasActiveKey = useByokStore((s) => s.hasActiveKey());
+  const hasKey = useByokStore((s) => s.hasKey());
   const mounted = useMounted();
 
   const [newOpen, setNewOpen] = useState(false);
@@ -32,14 +32,14 @@ export default function Home() {
   // First-visit nudge: open Settings if no key set after hydration
   useEffect(() => {
     if (!mounted) return;
-    if (hasActiveKey) return;
+    if (hasKey) return;
     if (campaigns.length > 0) return;
     const seen = localStorage.getItem("echolore:settings-seen");
     if (seen) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSettingsOpen(true);
     localStorage.setItem("echolore:settings-seen", "1");
-  }, [mounted, hasActiveKey, campaigns.length]);
+  }, [mounted, hasKey, campaigns.length]);
 
   const activeCampaign = useMemo(
     () => campaigns.find((c) => c.id === activeId) ?? null,

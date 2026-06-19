@@ -30,20 +30,14 @@ export interface WorldState {
 
 // --- BYOK (Bring Your Own Key) ---
 
-export type LlmProvider = "gemini" | "openai" | "anthropic";
-
+// EchoLore is OpenAI-only: one key handles chat (gpt-4o-mini default),
+// lorebook updates (gpt-4o-mini), AND embeddings (text-embedding-3-small).
+// This keeps the UX dead-simple and the RAG dimension consistent at 1536.
 export interface ByokConfig {
-  provider: LlmProvider;
-  keys: {
-    gemini?: string;
-    openai?: string;
-    anthropic?: string;
-  };
-  // Model identifiers per provider (Vercel AI SDK syntax)
+  apiKey: string;
   chatModel: string;
   loreModel: string;   // cheap/fast model for the lorebook updater
-  embedModel: string;  // OpenAI text-embedding-3-small for now (used by all providers,
-                       // since gemini embeddings have a different dim — see README for notes)
+  embedModel: string;  // text-embedding-3-small (1536 dims)
 }
 
 // Form payload for the New Campaign setup modal
@@ -53,4 +47,19 @@ export interface NewCampaignInput {
   userPersona: string;
   aiPersona: string;
   startingState?: Record<string, unknown>;
+}
+
+// --- RAG pipeline types (server-side) ---
+
+export interface RetrievedMemory {
+  id: string;
+  messageId: string;
+  content: string;
+  similarity: number;
+}
+
+export interface CompiledPrompt {
+  system: string;   // core directive + world + personas + world state + memories
+  // ModelMessage-shaped ({role, content}) — passed directly to streamText
+  messages: { role: MessageRole; content: string }[]; // working memory + user input
 }

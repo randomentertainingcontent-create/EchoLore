@@ -1,6 +1,6 @@
 # EchoLore
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyour-username%2Fecholore&env=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY&envDescription=Supabase%20project%20URL%20and%20anon%20key%20(only%20required%20for%20production%20deployment%20%E2%80%94%20the%20local%20preview%20runs%20on%20SQLite&project-name=echolore&repository-name=echolore)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Frandomentertainingcontent-create%2FEchoLore&env=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY&envDescription=Supabase%20project%20URL%20and%20anon%20key%20(only%20required%20for%20production%20deployment%20%E2%80%94%20the%20local%20preview%20runs%20on%20SQLite)&project-name=echolore&repository-name=echolore)
 
 > **BYOK AI roleplay with RAG memory.** Create custom worlds, become anyone, and let an AI Game Master remember every twist — powered by vectorized memories and a dynamic lorebook.
 
@@ -11,10 +11,11 @@ EchoLore is an open-source, Bring-Your-Own-Key roleplay client designed to **max
 ## ✨ Features
 
 - **Build entirely custom worlds.** Define the world, who you are, and the AI's role. The AI acts as a dynamic Game Master / Storyteller.
-- **RAG memory.** Every message is embedded. The top 5 most semantically relevant past events are injected into every prompt — so an offhand detail from 200 messages ago can resurface naturally.
+- **RAG memory.** Every message is embedded with `text-embedding-3-small`. The top 5 most semantically relevant past events are injected into every prompt — so an offhand detail from 200 messages ago can resurface naturally.
 - **Working memory.** The last 5 raw messages are always injected for immediate conversational continuity.
-- **Dynamic lorebook.** A JSON world_state (location, inventory, health, quests, etc.) is auto-updated by a background model after every Nth message, so the AI never forgets where you are or what you're carrying.
-- **BYOK — Bring Your Own Key.** Paste your own API keys for **Google Gemini** (default, free tier), **OpenAI**, or **Anthropic**. Keys live in your browser's `localStorage` only — they are never persisted server-side, never logged.
+- **Dynamic lorebook.** A JSON `world_state` (location, inventory, health, quests, etc.) is auto-updated by a background `gpt-4o-mini` call after every 4th message, so the AI never forgets where you are or what you're carrying.
+- **Streaming responses.** The Game Master's reply streams in token-by-token via the Vercel AI SDK.
+- **BYOK — Bring Your Own Key.** Paste your OpenAI API key. It lives in your browser's `localStorage` only — never persisted server-side, never logged. One key handles chat, embeddings, and the lorebook updater.
 - **One-click Vercel deploy.** Click the badge above, paste your Supabase keys, and you're live.
 
 ---
@@ -24,11 +25,13 @@ EchoLore is an open-source, Bring-Your-Own-Key roleplay client designed to **max
 | Layer            | Choice                                                           |
 | ---------------- | ---------------------------------------------------------------- |
 | Frontend         | Next.js 16 (App Router), Tailwind CSS, shadcn/ui                 |
-| AI / LLM         | Vercel AI SDK (OpenAI / Anthropic / Gemini) + OpenAI Embeddings  |
+| AI / LLM         | Vercel AI SDK 6 + `@ai-sdk/openai` (gpt-4o-mini default)         |
 | Embeddings       | OpenAI `text-embedding-3-small` (1536 dimensions)                |
 | Production DB    | Supabase (PostgreSQL + pgvector + RLS)                           |
 | Local preview DB | Prisma + SQLite (with JS-side cosine similarity for vectors)     |
 | Hosting          | Vercel                                                           |
+
+> **Why OpenAI only?** One key handles everything (chat, lorebook, embeddings), the RAG vector dimension stays consistent at 1536, and `gpt-4o-mini` is cheap enough to actually use. The Vercel AI SDK makes it trivial to add more providers later — see `src/lib/rag/embedding.ts` and `src/app/api/chat/route.ts`.
 
 ---
 
@@ -42,24 +45,20 @@ The repo ships with a **dual-layer** database architecture:
 ### Prerequisites
 
 - Node.js 20+ (or [Bun](https://bun.sh) 1.1+)
-- An API key from one of:
-  - **Google Gemini** (recommended — generous free tier): https://aistudio.google.com/app/apikey
-  - **OpenAI**: https://platform.openai.com/api-keys
-  - **Anthropic**: https://console.anthropic.com/settings/keys
+- An OpenAI API key → https://platform.openai.com/api-keys
 
 ### Install & run
 
 ```bash
-git clone https://github.com/your-username/echolore.git
-cd echolore
+git clone https://github.com/randomentertainingcontent-create/EchoLore.git
+cd EchoLore
 bun install          # or: npm install
+cp .env.example .env # default SQLite path is fine for local preview
 bun run db:push      # create the local SQLite database
 bun run dev          # http://localhost:3000
 ```
 
-Open the app, click **Settings** (top-right), paste your API key(s), and click **New World** to begin.
-
-> **Note on embeddings:** EchoLore uses OpenAI's `text-embedding-3-small` for the RAG memory layer regardless of your chat provider. If you pick Gemini or Anthropic as your chat provider, you'll also need an OpenAI key for memory to work.
+Open the app, click **Settings** (top-right), paste your OpenAI API key, and click **New World** to begin.
 
 ---
 
@@ -186,11 +185,11 @@ $$;
 4. **Get your keys:** Project Settings → API → copy `Project URL` and `anon public key`
 5. **Deploy to Vercel** (click the badge at the top) and set these env vars:
 
-| Env var                       | Required | Purpose                                            |
-| ----------------------------- | -------- | -------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`    | ✅ prod  | Supabase project URL                               |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ prod | Supabase anon key                                  |
-| `DATABASE_URL`                | local only | SQLite file path (Prisma local preview)         |
+| Env var                          | Required | Purpose                                            |
+| -------------------------------- | -------- | -------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`       | ✅ prod  | Supabase project URL                               |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`  | ✅ prod  | Supabase anon key                                  |
+| `DATABASE_URL`                   | local only | SQLite file path (Prisma local preview)         |
 
 > The local preview (Prisma + SQLite) is automatically used when `NEXT_PUBLIC_SUPABASE_URL` is unset.
 
@@ -198,35 +197,36 @@ $$;
 
 ## 🧠 How the RAG Memory Pipeline Works
 
-Every time the user sends a message, EchoLore runs this pipeline:
+Every time the user sends a message, EchoLore runs this pipeline inside `POST /api/chat`:
 
 1. **Save** the user's message → `messages` table
 2. **Embed** the user's message (OpenAI `text-embedding-3-small`) → `embeddings` table
 3. **Vector search** (cosine distance) on the `embeddings` table for that `campaign_id` → top 5 most relevant past events
 4. **Working memory:** pull the last 5 raw messages from `messages` for immediate context
-5. **Compile the mega-prompt** in this exact order:
+5. **Compile the mega-prompt** in this exact order (`src/lib/rag/compile-prompt.ts`):
    1. Core directive ("You are an immersive AI roleplayer. Stay in character…")
    2. World description + User Persona + AI Persona (from `campaigns`)
    3. World State (raw JSON from `world_state`)
    4. Retrieved Memories (the 5 vectorized memories, labeled "Past Events")
-   5. Working Memory (the last 5 messages)
-   6. User Input (the current message)
-6. **Stream** the compiled prompt to the LLM via the Vercel AI SDK → AI reply is saved to `messages` and `embeddings`
+   5. Working Memory (the last 5 messages — passed as actual chat history)
+   6. User Input (the current message — passed as the final user message)
+6. **Stream** the compiled prompt to `gpt-4o-mini` via `streamText` from the Vercel AI SDK → the AI reply streams token-by-token to the browser
+7. **Save** the full AI reply to `messages` and re-embed it into `embeddings` (so future turns can retrieve it)
 
 ### Dynamic Lorebook (background updater)
 
-After every **4th message** in a campaign, EchoLore fires a background call to a cheap/fast model (Gemini Flash / GPT-4o-mini / Claude Haiku):
+After every **4th message** in a campaign, EchoLore fires a background call to `gpt-4o-mini`:
 
-> *"Read the following recent conversation. Based on the user's actions, has the user's location, inventory, health, or active quests changed? Output the updated JSON state. Current State: [JSON]. Recent Chat: [last 4 messages]."*
+> *"You are the lorebook keeper for a roleplay campaign. Based on the recent conversation, has the user's location, inventory, health, or active quests changed? Output ONLY the updated JSON state. Current State: [JSON]. Recent Chat: [last 4 messages]."*
 
-The returned JSON is **upserted** into the `world_state` table for that campaign — so the AI always knows where you are, what you're carrying, and what you're chasing.
+The returned JSON is **upserted** into the `world_state` table for that campaign — so the AI always knows where you are, what you're carrying, and what you're chasing. The lorebook is viewable in the chat header via the **Show lorebook** button.
 
 ---
 
 ## 🔐 Security Model
 
-- **API keys** live in your browser's `localStorage` only. They are **never** persisted server-side, **never** logged, and **never** stored in the database.
-- Keys are attached to each API request via the `x-user-api-key` header, read server-side by the Next.js Route Handler, used to call the LLM, then discarded.
+- **API key** lives in your browser's `localStorage` only. It is **never** persisted server-side, **never** logged, and **never** stored in the database.
+- The key is attached to each API request via the `x-user-api-key` header, read server-side by the Next.js Route Handler, used to call OpenAI, then discarded.
 - **Row Level Security** is enabled on every Supabase table. Users can only see and modify rows where `campaigns.user_id = auth.uid()`.
 - The local preview uses a mock single-user UUID (stored in `localStorage`). Swap in Supabase Auth for production — the data model already expects it.
 
@@ -235,7 +235,7 @@ The returned JSON is **upserted** into the `world_state` table for that campaign
 ## 📁 Project Structure
 
 ```
-echolore/
+EchoLore/
 ├── supabase/
 │   └── schema.sql             # Production PostgreSQL schema (pgvector + RLS)
 ├── prisma/
@@ -245,26 +245,36 @@ echolore/
 │   │   ├── page.tsx           # Main app shell (sidebar + chat)
 │   │   ├── layout.tsx         # Root layout (dark obsidian+ember theme)
 │   │   └── api/
-│   │       └── campaigns/
-│   │           ├── route.ts   # GET/POST campaigns
-│   │           └── [id]/route.ts  # GET/DELETE one campaign
+│   │       ├── campaigns/
+│   │       │   ├── route.ts        # GET/POST campaigns
+│   │       │   └── [id]/route.ts   # GET/DELETE one campaign
+│   │       ├── chat/
+│   │       │   └── route.ts        # POST — the RAG pipeline + streamText
+│   │       ├── messages/
+│   │       │   └── [campaignId]/route.ts  # GET message history
+│   │       └── lorebook/
+│   │           └── [campaignId]/route.ts  # GET current world_state
 │   ├── components/
 │   │   ├── echolore/
 │   │   │   ├── brand.tsx              # Logo + wordmark
 │   │   │   ├── sidebar.tsx            # Campaign list
-│   │   │   ├── chat-window.tsx        # Chat UI (placeholder for RAG pipeline)
+│   │   │   ├── chat-window.tsx        # Streaming chat UI
 │   │   │   ├── new-campaign-modal.tsx # "New World" setup flow
-│   │   │   └── settings-modal.tsx     # BYOK API key manager
+│   │   │   └── settings-modal.tsx     # OpenAI API key manager
 │   │   └── ui/                # shadcn/ui components
 │   ├── hooks/
 │   │   ├── use-mock-user.ts   # Mock single-user UUID (swap for Supabase auth)
 │   │   └── use-mounted.ts     # React 19-safe hydration guard
 │   ├── lib/
-│   │   ├── auth.ts            # Server-side user-id header reader
-│   │   ├── db.ts              # Prisma client
-│   │   └── byok/headers.ts    # BYOK header builder + reader
+│   │   ├── auth.ts                   # Server-side user-id header reader
+│   │   ├── db.ts                     # Prisma client
+│   │   ├── byok/headers.ts           # BYOK header builder + reader
+│   │   └── rag/
+│   │       ├── compile-prompt.ts     # The mega-prompt compiler (secret sauce)
+│   │       ├── embedding.ts          # OpenAI text-embedding-3-small wrapper
+│   │       └── local-vector.ts       # Cosine similarity (local preview)
 │   ├── store/
-│   │   ├── byok-store.ts      # Zustand+persist: API keys in localStorage
+│   │   ├── byok-store.ts      # Zustand+persist: OpenAI key in localStorage
 │   │   └── campaign-store.ts  # Zustand: campaign list + active world_state
 │   └── types/echolore.ts      # Shared types
 └── README.md
@@ -274,20 +284,20 @@ echolore/
 
 ## 🗺️ Roadmap
 
-This is the foundation. The next iteration wires up the actual RAG pipeline:
-
 - [x] Project scaffold (Next.js 16, Tailwind, shadcn/ui)
 - [x] Supabase SQL schema (pgvector + RLS)
 - [x] Local preview DB (Prisma + SQLite)
 - [x] "New World" setup modal (World, User Persona, AI Persona, Starting State)
 - [x] Sidebar campaign list
-- [x] BYOK settings modal (Gemini default, OpenAI, Anthropic)
-- [x] Chat window placeholder
-- [ ] **RAG message pipeline** (embed → search → compile → stream)
-- [ ] **Background lorebook updater** (every 4th message)
+- [x] BYOK settings modal (OpenAI key + model identifiers)
+- [x] **RAG message pipeline** (embed → vector search → compile → streamText)
+- [x] **Background lorebook updater** (every 4th message)
+- [x] Streaming responses (Vercel AI SDK `streamText`)
+- [x] Living lorebook viewer in the chat header
 - [ ] Supabase auth integration (replace mock user)
-- [ ] Streaming responses (Vercel AI SDK `streamText`)
 - [ ] Mobile sidebar drawer
+- [ ] Message editing / regeneration history
+- [ ] Multi-provider support (Anthropic, Gemini) — kept simple for v1
 
 ---
 

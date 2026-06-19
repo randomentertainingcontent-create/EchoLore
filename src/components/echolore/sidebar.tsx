@@ -28,7 +28,7 @@ interface SidebarProps {
 export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
   const { userId, ready } = useMockUser();
   const { campaigns, activeId, fetchAll, remove, setActive, loading } = useCampaignStore();
-  const hasActiveKey = useByokStore((s) => s.hasActiveKey());
+  const hasKey = useByokStore((s) => s.hasKey());
   const hydrated = useMounted();
 
   useEffect(() => {
@@ -44,9 +44,9 @@ export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
           <span
             className={cn(
               "h-2 w-2 rounded-full el-pulse-dot",
-              hydrated && hasActiveKey ? "bg-primary" : "bg-muted-foreground/40",
+              hydrated && hasKey ? "bg-primary" : "bg-muted-foreground/40",
             )}
-            title={hasActiveKey ? "BYOK active" : "No API key set"}
+            title={hasKey ? "OpenAI key active" : "No OpenAI key set"}
           />
         </div>
       </div>
@@ -159,10 +159,10 @@ export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
           onClick={onOpenSettings}
         >
           <Settings className="h-4 w-4" />
-          API Keys {hasActiveKey ? null : <Badge variant="outline" className="ml-1 text-[10px]">Required</Badge>}
+          API Keys {hasKey ? null : <Badge variant="outline" className="ml-1 text-[10px]">Required</Badge>}
         </Button>
         <div className="mt-2 px-3 text-[10px] text-muted-foreground/70">
-          Keys stored in browser only · never sent to DB
+          OpenAI key · stored in browser only
         </div>
       </div>
     </aside>
