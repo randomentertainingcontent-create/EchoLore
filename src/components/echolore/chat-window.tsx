@@ -46,10 +46,11 @@ export function ChatWindow({
       worldStateJson={worldStateJson}
       userId={userId}
       ready={ready}
-      apiKey={config.apiKey}
+      openrouterKey={config.openrouterKey}
       chatModel={config.chatModel}
       loreModel={config.loreModel}
       embedModel={config.embedModel}
+      embedDimensions={config.embedDimensions}
       onOpenSettings={onOpenSettings}
     />
   );
@@ -63,11 +64,12 @@ function NoKeyGate({ onOpenSettings }: { onOpenSettings: () => void }) {
           <KeyRound className="h-6 w-6 text-primary" />
         </div>
         <h2 className="text-xl font-semibold text-foreground">
-          Add your OpenAI key to begin
+          Add your OpenRouter key to begin
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          EchoLore uses your own OpenAI API key for chat, embeddings, and the
-          background lorebook. Your key lives only in your browser.
+          EchoLore uses your own OpenRouter API key for chat, embeddings, and the
+          background lorebook. One key gives access to hundreds of models.
+          Free tier available — no credit card required.
         </p>
         <Button
           onClick={onOpenSettings}
@@ -85,16 +87,17 @@ interface ActiveChatProps {
   worldStateJson: string | null;
   userId: string | null;
   ready: boolean;
-  apiKey: string;
+  openrouterKey: string;
   chatModel: string;
   loreModel: string;
   embedModel: string;
+  embedDimensions: number;
   onOpenSettings: () => void;
 }
 
 function ActiveChat({
   campaign, worldStateJson, userId, ready,
-  apiKey, chatModel, loreModel, embedModel,
+  openrouterKey, chatModel, loreModel, embedModel, embedDimensions,
 }: ActiveChatProps) {
   // Initial state assumes loading — only set once per mount (which is once per
   // campaign thanks to the `key={campaign.id}` on this component).
@@ -133,14 +136,15 @@ function ActiveChat({
       api: "/api/chat",
       headers: {
         "x-user-id": userId,
-        "x-user-api-key": apiKey,
+        "x-openrouter-key": openrouterKey,
         "x-chat-model": chatModel,
         "x-lore-model": loreModel,
         "x-embed-model": embedModel,
+        "x-embed-dimensions": String(embedDimensions),
       },
       body: { campaignId: campaign.id },
     });
-  }, [userId, apiKey, chatModel, loreModel, embedModel, campaign.id]);
+  }, [userId, openrouterKey, chatModel, loreModel, embedModel, embedDimensions, campaign.id]);
 
   const { messages, sendMessage, status, error, stop, regenerate } = useChat({
     transport: transport ?? undefined,
@@ -421,7 +425,7 @@ function EmptyChat({
             <Wand2 className="h-4 w-4" /> Forge a new world
           </Button>
           <Button variant="outline" onClick={onOpenSettings} className="gap-2 border-border">
-            <KeyRound className="h-4 w-4" /> Add your OpenAI key
+            <KeyRound className="h-4 w-4" /> Add your OpenRouter key
           </Button>
         </div>
 

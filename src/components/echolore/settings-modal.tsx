@@ -27,7 +27,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
-  const { config, setApiKey, setChatModel, setLoreModel, clearAll, hasKey } = useByokStore();
+  const { config, setOpenrouterKey, setChatModel, setLoreModel, clearAll, hasKey } = useByokStore();
   const { toast } = useToast();
   const [show, setShow] = useState(false);
   const mounted = useMounted();
@@ -51,13 +51,14 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
             <KeyRound className="h-5 w-5 text-primary" />
-            OpenAI API Key
+            OpenRouter API Key
           </DialogTitle>
           <DialogDescription>
-            Paste your OpenAI API key. It is stored in your browser&apos;s
+            Paste your OpenRouter API key. One key handles chat, lorebook
+            updates, AND embeddings — OpenRouter routes to hundreds of models
+            including free ones. Stored in your browser&apos;s
             <code className="mx-1 rounded bg-muted px-1 py-0.5">localStorage</code> only —
-            never in the database, never logged. One key handles chat, lorebook
-            updates, and embeddings.
+            never in the database, never logged.
           </DialogDescription>
         </DialogHeader>
 
@@ -65,9 +66,9 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
           {/* API key input */}
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="openai-key">API Key</Label>
+              <Label htmlFor="or-key">API Key</Label>
               <a
-                href="https://platform.openai.com/api-keys"
+                href="https://openrouter.ai/keys"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
@@ -77,11 +78,11 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             </div>
             <div className="relative">
               <Input
-                id="openai-key"
+                id="or-key"
                 type={show ? "text" : "password"}
-                placeholder="sk-..."
-                value={config.apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="sk-or-v1-..."
+                value={config.openrouterKey}
+                onChange={(e) => setOpenrouterKey(e.target.value)}
                 autoComplete="off"
                 spellCheck={false}
                 className="pr-10 font-mono text-xs"
@@ -96,10 +97,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Get one at <span className="text-foreground">platform.openai.com/api-keys</span>.
-              Keys live in your browser only.
+              Sign up at <span className="text-foreground">openrouter.ai</span> —
+              free tier available, no credit card required to start.
             </p>
-            {config.apiKey && (
+            {config.openrouterKey && (
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="border-primary/40 text-primary">
                   <CheckCircle2 className="mr-1 h-3 w-3" /> Key set
@@ -111,7 +112,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
           {/* Model identifiers */}
           <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Model identifiers
+              Model identifiers (OpenRouter)
             </div>
             <div className="grid gap-2 md:grid-cols-3">
               <div className="grid gap-1">
@@ -155,9 +156,12 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               Reset chat/lore to defaults
             </button>
             <p className="text-[11px] text-muted-foreground/80">
-              Defaults: <code className="text-foreground">{DEFAULT_BYOK.chatModel}</code> for
-              chat &amp; lorebook, <code className="text-foreground">{DEFAULT_BYOK.embedModel}</code> for
-              embeddings (locked — the RAG dimension is 1536).
+              Defaults use free-tier Llama 3.2 3B. Try
+              <code className="mx-1 text-foreground">openai/gpt-4o-mini</code>
+              or
+              <code className="mx-1 text-foreground">anthropic/claude-3.5-sonnet</code>
+              for higher quality. Browse all models at openrouter.ai/models.
+              Embeddings default to OpenAI&apos;s <code className="text-foreground">text-embedding-3-small</code> (1536-dim — matches the schema).
             </p>
           </div>
         </div>
@@ -171,13 +175,13 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                 <span className="text-foreground font-medium">Storage:</span> Your key lives only in
                 <code className="mx-1 rounded bg-muted px-1 py-0.5">localStorage</code> on this browser.
                 It&apos;s attached to API requests via the
-                <code className="mx-1 rounded bg-muted px-1 py-0.5">x-user-api-key</code> header
+                <code className="mx-1 rounded bg-muted px-1 py-0.5">x-openrouter-key</code> header
                 and read server-side by the Next.js route handler — never persisted.
               </p>
               <p>
-                <span className="text-foreground font-medium">Usage:</span> EchoLore calls OpenAI
-                directly using your key. Standard OpenAI billing applies. Avoid using a key with
-                unlimited spend — set a usage cap at platform.openai.com.
+                <span className="text-foreground font-medium">Usage:</span> EchoLore calls OpenRouter
+                directly using your key. Standard OpenRouter billing applies. Set a spend limit at
+                openrouter.ai/credits to avoid surprises.
               </p>
             </div>
           </div>

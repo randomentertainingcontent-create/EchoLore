@@ -4,32 +4,28 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ByokConfig } from "@/types/echolore";
 
-// EchoLore uses two BYOK keys:
-//   - OpenRouter for chat + lorebook (one key, hundreds of models, free tier available)
-//   - Jina AI for embeddings (free tier, generous limits, 1024-dim)
+// EchoLore is OpenRouter-only.
+// One key handles chat + lorebook + embeddings via OpenRouter's routing layer.
+// OpenRouter gives access to hundreds of models with one signup, including
+// free-tier options (Llama 3.2, Gemini, etc.).
 //
-// Defaults point at free-tier OpenRouter models so users can try it for $0.
+// Sign up at https://openrouter.ai/keys — generous free tier, no credit card
+// required to start.
 export const DEFAULT_BYOK: ByokConfig = {
   openrouterKey: "",
-  jinaKey: "",
-  // Llama 3.2 3B is free on OpenRouter and great for roleplay.
-  // Users can switch to anything: gpt-4o-mini, claude-3.5-sonnet, etc.
-  chatModel: "meta-llama/llama-3.2-3b-instruct:free",
-  loreModel: "meta-llama/llama-3.2-3b-instruct:free",
-  embedModel: "jina-embeddings-v3",
-  embedDimensions: 1024,
+  chatModel: "meta-llama/llama-3.2-3b-instruct:free",  // free, good for roleplay
+  loreModel: "meta-llama/llama-3.2-3b-instruct:free",  // free, fast for lorebook
+  embedModel: "text-embedding-3-small",                 // OpenAI via OpenRouter, 1536-dim
+  embedDimensions: 1536,
 };
 
 interface ByokState {
   config: ByokConfig;
   setOpenrouterKey: (key: string) => void;
-  setJinaKey: (key: string) => void;
   setChatModel: (m: string) => void;
   setLoreModel: (m: string) => void;
   clearAll: () => void;
-  hasKeys: () => boolean;       // both keys set
-  hasChatKey: () => boolean;    // OpenRouter key set
-  hasEmbedKey: () => boolean;   // Jina key set
+  hasKey: () => boolean;
 }
 
 export const useByokStore = create<ByokState>()(
@@ -40,9 +36,6 @@ export const useByokStore = create<ByokState>()(
       setOpenrouterKey: (key) =>
         set((s) => ({ config: { ...s.config, openrouterKey: key.trim() } })),
 
-      setJinaKey: (key) =>
-        set((s) => ({ config: { ...s.config, jinaKey: key.trim() } })),
-
       setChatModel: (m) =>
         set((s) => ({ config: { ...s.config, chatModel: m } })),
 
@@ -50,46 +43,17 @@ export const useByokStore = create<ByokState>()(
         set((s) => ({ config: { ...s.config, loreModel: m } })),
 
       clearAll: () =>
-        set(() => ({
-          config: {
-            ...DEFAULT_BYOK,
-            openrouterKey: "",
-            jinaKey: "",
-          },
-        })),
+        set(() => ({ config: { ...DEFAULT_BYOK, openrouterKey: "" } })),
 
-      hasKeys: () =>
-        Boolean(get().config.openrouterKey.trim() && get().config.jinaKey.trim()),
-      hasChatKey: () => Boolean(get().config.openrouterKey.trim()),
-      hasEmbedKey: () => Boolean(get().config.jinaKey.trim()),
+      hasKey: () => Boolean(get().config.openrouterKey.trim()),
     }),
     {
       name: "echolore-byok",
-      version: 3, // bumped from v2 (OpenAI-only) to v3 (OpenRouter + Jina)
-      // Migrate from older BYOK shapes.
+      version: 4, // v3 was OpenRouter+Jina (never shipped), v4 is OpenRouter-only
       migrate: (persisted: unknown, version: number) => {
-        const old = (persisted && typeof persisted === "object"
-          ? (persisted as { config?: Record<string, unknown> }).config
-          : null) ?? {};
-        if (version < 3) {
-          // v1: multi-provider { keys: { openai, gemini, anthropic } }
-          // v2: OpenAI-only { apiKey, chatModel, loreModel, embedModel }
-          // v3: OpenRouter + Jina
-          const v1Openai = (old.keys as { openai?: string } | undefined)?.openai;
-          const v2Key = (old.apiKey as string | undefined);
-          return {
-            config: {
-              openrouterKey: "",
-              jinaKey: "",
-              chatModel: DEFAULT_BYOK.chatModel,
-              loreModel: DEFAULT_BYOK.loreModel,
-              embedModel: DEFAULT_BYOK.embedModel,
-              embedDimensions: DEFAULT_BYOK.embedDimensions,
-              // We can't auto-migrate OpenAI keys to OpenRouter, so users re-paste.
-              // But we keep the var name in case future versions need to detect it.
-              ...(v1Openai || v2Key ? { _migratedNote: "OpenAI key dropped — paste OpenRouter key" } : {}),
-            },
-          };
+        if (version < 4 && persisted && typeof persisted === "object") {
+          // Drop everything from older versions — user pastes a fresh OpenRouter key.
+          return { config: { ...DEFAULT_BYOK, openrouterKey: "" } };
         }
         return persisted as { config: ByokConfig };
       },

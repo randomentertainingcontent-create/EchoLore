@@ -46,7 +46,7 @@ export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
               "h-2 w-2 rounded-full el-pulse-dot",
               hydrated && hasKey ? "bg-primary" : "bg-muted-foreground/40",
             )}
-            title={hasKey ? "OpenAI key active" : "No OpenAI key set"}
+            title={hasKey ? "OpenRouter key active" : "No OpenRouter key set"}
           />
         </div>
       </div>
@@ -162,7 +162,7 @@ export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
           API Keys {hasKey ? null : <Badge variant="outline" className="ml-1 text-[10px]">Required</Badge>}
         </Button>
         <div className="mt-2 px-3 text-[10px] text-muted-foreground/70">
-          OpenAI key · stored in browser only
+          OpenRouter key · stored in browser only
         </div>
       </div>
     </aside>

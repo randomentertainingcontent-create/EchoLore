@@ -3,12 +3,14 @@
 import { create } from "zustand";
 import type { Campaign, NewCampaignInput } from "@/types/echolore";
 
-type CampaignWithState = Campaign & { worldState?: { stateJson: string } | null };
+// From the API: world_state.state_json comes back as a parsed JSON object (Supabase
+// auto-parses JSONB columns). We stringify it for the chat-window's JSON viewer.
+type CampaignWithState = Campaign & { worldState?: { stateJson: unknown } | null };
 
 interface CampaignState {
   campaigns: Campaign[];
   activeId: string | null;
-  activeWorldState: string | null; // raw JSON string of the world_state row
+  activeWorldState: string | null; // stringified JSON of the world_state row
   loading: boolean;
   error: string | null;
 
@@ -19,7 +21,17 @@ interface CampaignState {
   hydrateActive: (userId: string, id: string) => Promise<void>;
 }
 
-export const useCampaignStore = create<CampaignState>((set, get) => ({
+function stringifyState(stateJson: unknown): string | null {
+  if (stateJson == null) return null;
+  if (typeof stateJson === "string") return stateJson;
+  try {
+    return JSON.stringify(stateJson);
+  } catch {
+    return null;
+  }
+}
+
+export const useCampaignStore = create<CampaignState>((set) => ({
   campaigns: [],
   activeId: null,
   activeWorldState: null,
@@ -49,11 +61,11 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     if (!res.ok) throw new Error((await res.json()).error ?? "Failed to create campaign");
     const { campaign } = await res.json() as { campaign: CampaignWithState };
     set((s) => ({
-      campaigns: [{ ...campaign, worldState: undefined } as unknown as Campaign, ...s.campaigns],
+      campaigns: [campaign as unknown as Campaign, ...s.campaigns],
       activeId: campaign.id,
-      activeWorldState: campaign.worldState?.stateJson ?? null,
+      activeWorldState: stringifyState(campaign.worldState?.stateJson),
     }));
-    return campaign;
+    return campaign as unknown as Campaign;
   },
 
   remove: async (userId, id) => {
@@ -80,6 +92,6 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       return;
     }
     const { campaign } = await res.json() as { campaign: CampaignWithState };
-    set({ activeWorldState: campaign.worldState?.stateJson ?? null });
+    set({ activeWorldState: stringifyState(campaign.worldState?.stateJson) });
   },
 }));

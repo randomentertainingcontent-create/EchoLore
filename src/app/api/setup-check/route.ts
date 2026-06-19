@@ -1,0 +1,41 @@
+import { NextResponse } from "next/server";
+import { serverAdmin } from "@/lib/supabase";
+
+/**
+ * GET /api/setup-check
+ * Verifies that the Supabase schema is installed by trying to query the
+ * campaigns table. Returns a friendly status object the frontend can use
+ * to show a "run schema.sql" message if setup isn't complete.
+ */
+export async function GET() {
+  try {
+    const supabase = serverAdmin();
+    // Use a real (non-head) select so Supabase returns the actual error
+    // rather than swallowing it. Limit 1 to keep it cheap.
+    const { error } = await supabase
+      .from("campaigns")
+      .select("id")
+      .limit(1);
+
+    if (error) {
+      return NextResponse.json({
+        ok: false,
+        schemaInstalled: false,
+        error: error.message,
+        hint: "Run supabase/schema.sql in your Supabase SQL editor (Dashboard → SQL Editor → New query → paste the file → Run).",
+      }, { status: 200 }); // 200 so the frontend can read the body
+    }
+
+    return NextResponse.json({
+      ok: true,
+      schemaInstalled: true,
+    });
+  } catch (e) {
+    return NextResponse.json({
+      ok: false,
+      schemaInstalled: false,
+      error: (e as Error).message,
+      hint: "Make sure NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY are set in .env",
+    }, { status: 200 });
+  }
+}

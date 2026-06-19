@@ -1,13 +1,12 @@
 import { NextRequest } from "next/server";
-import { streamText } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
-import { db } from "@/lib/db";
+import { streamText, generateText } from "ai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { serverAdmin } from "@/lib/supabase";
 import { getUserIdFromHeaders } from "@/lib/auth";
 import { readByokHeaders } from "@/lib/byok/headers";
 import { compilePrompt } from "@/lib/rag/compile-prompt";
 import { generateEmbedding } from "@/lib/rag/embedding";
-import { topKSimilar, parseVector } from "@/lib/rag/local-vector";
-import type { RetrievedMemory, Message } from "@/types/echolore";
+import type { RetrievedMemory, Message, MessageRole } from "@/types/echolore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,12 +17,12 @@ export const dynamic = "force-dynamic";
  *
  * RAG pipeline:
  *   A. Save user message → messages table
- *   B. Embed user message (OpenAI text-embedding-3-small) → embeddings table
- *   C. Vector similarity search (cosine) on embeddings table for that campaign
+ *   B. Embed user message (OpenRouter text-embedding-3-small) → embeddings table
+ *   C. Vector similarity search (cosine distance) via Supabase RPC `match_embeddings`
  *      → top 5 most relevant past events
  *   D. Pull last 5 raw messages → working memory
  *   E. Compile mega-prompt (directive + world + state + memories + working + input)
- *   F. streamText via Vercel AI SDK → AI reply
+ *   F. streamText via Vercel AI SDK + OpenRouter → AI reply
  *   G. Save full AI reply → messages + embeddings tables
  *   H. If (campaign message count) % 4 === 0, fire background lorebook sync
  */
@@ -46,90 +45,105 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // --- Ownership check ---
-  const campaign = await db.campaign.findFirst({
-    where: { id: campaignId, userId },
-    include: { worldState: true },
-  });
+  const supabase = serverAdmin();
+
+  // --- Ownership check + load campaign + world_state ---
+  const { data: campaign, error: cErr } = await supabase
+    .from("campaigns")
+    .select("id, user_id, title, world_description, user_persona, ai_persona")
+    .eq("id", campaignId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (cErr) {
+    return Response.json({ error: `Supabase error: ${cErr.message}` }, { status: 500 });
+  }
   if (!campaign) {
     return Response.json({ error: "Campaign not found" }, { status: 404 });
   }
 
+  const { data: ws } = await supabase
+    .from("world_state")
+    .select("state_json")
+    .eq("campaign_id", campaignId)
+    .maybeSingle();
+  const worldState = (ws?.state_json ?? null) as Record<string, unknown> | null;
+
   // --- A. Save user message ---
-  const userMsg = await db.message.create({
-    data: { campaignId, role: "user", content: message.trim() },
-  });
+  const { data: userMsg, error: mErr } = await supabase
+    .from("messages")
+    .insert({ campaign_id: campaignId, role: "user", content: message.trim() })
+    .select("id, campaign_id, role, content, created_at")
+    .single();
+
+  if (mErr || !userMsg) {
+    return Response.json({ error: `Failed to save message: ${mErr?.message}` }, { status: 500 });
+  }
 
   // --- B. Embed user message + save ---
   let userEmbedding: number[] = [];
   try {
     userEmbedding = await generateEmbedding(
-      headers["x-user-api-key"],
+      headers["x-openrouter-key"],
       headers["x-embed-model"],
       message.trim(),
     );
-    await db.embedding.create({
-      data: {
-        messageId: userMsg.id,
-        campaignId,
-        content: message.trim(),
-        vector: JSON.stringify(userEmbedding),
-      },
+    await supabase.from("embeddings").insert({
+      message_id: userMsg.id,
+      campaign_id: campaignId,
+      content: message.trim(),
+      embedding: userEmbedding,
     });
   } catch (e) {
     console.error("[echolore] user embedding failed:", (e as Error).message);
   }
 
-  // --- C. Vector similarity search (top 5) ---
+  // --- C. Vector similarity search via Supabase RPC (pgvector cosine distance) ---
   let memories: RetrievedMemory[] = [];
   if (userEmbedding.length > 0) {
     try {
-      const allEmbeddings = await db.embedding.findMany({
-        where: { campaignId },
-        select: { id: true, messageId: true, content: true, vector: true },
+      const { data: matches, error: rErr } = await supabase.rpc("match_embeddings", {
+        p_campaign_id: campaignId,
+        p_query_vec: userEmbedding,
+        p_limit: 6,
       });
-      if (allEmbeddings.length > 0) {
-        const rows = allEmbeddings.map((r) => ({
-          id: r.id,
-          messageId: r.messageId,
-          content: r.content,
-          vector: parseVector(r.vector),
-        }));
-        memories = topKSimilar(rows, userEmbedding, 6)
-          .filter((r) => r.messageId !== userMsg.id)
+      if (rErr) {
+        console.error("[echolore] vector search failed:", rErr.message);
+      } else if (matches) {
+        memories = (matches as RetrievedMemory[])
+          .filter((r) => r.message_id !== userMsg.id)
           .slice(0, 5);
       }
     } catch (e) {
-      console.error("[echolore] vector search failed:", (e as Error).message);
+      console.error("[echolore] vector RPC failed:", (e as Error).message);
     }
   }
 
   // --- D. Working memory: last 5 raw messages (excluding the one we just saved) ---
-  const recentMsgs = await db.message.findMany({
-    where: { campaignId, id: { not: userMsg.id } },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-  });
-  const workingMemory: Message[] = recentMsgs
+  const { data: recent } = await supabase
+    .from("messages")
+    .select("id, campaign_id, role, content, created_at")
+    .eq("campaign_id", campaignId)
+    .neq("id", userMsg.id)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  const workingMemory: Message[] = (recent ?? [])
     .reverse()
     .map((m) => ({
       id: m.id,
-      campaignId: m.campaignId,
-      role: m.role as Message["role"],
+      campaignId: m.campaign_id,
+      role: m.role as MessageRole,
       content: m.content,
-      createdAt: m.createdAt.toISOString(),
+      createdAt: m.created_at,
     }));
 
   // --- E. Compile mega-prompt ---
-  const worldState = campaign.worldState?.stateJson
-    ? (JSON.parse(campaign.worldState.stateJson) as Record<string, unknown>)
-    : null;
-
   const compiled = compilePrompt({
     campaign: {
-      worldDescription: campaign.worldDescription,
-      userPersona: campaign.userPersona,
-      aiPersona: campaign.aiPersona,
+      worldDescription: campaign.world_description,
+      userPersona: campaign.user_persona,
+      aiPersona: campaign.ai_persona,
     },
     worldState,
     memories,
@@ -137,13 +151,12 @@ export async function POST(req: NextRequest) {
     userMessage: message.trim(),
   });
 
-  // --- F. streamText via Vercel AI SDK ---
-  const openai = createOpenAI({ apiKey: headers["x-user-api-key"] });
+  // --- F. streamText via Vercel AI SDK + OpenRouter ---
+  const openrouter = createOpenRouter({ apiKey: headers["x-openrouter-key"] });
 
   const result = streamText({
-    model: openai(headers["x-chat-model"]),
+    model: openrouter(headers["x-chat-model"]),
     system: compiled.system,
-    // compiled.messages are already in ModelMessage shape ({role, content}).
     messages: compiled.messages,
     temperature: 0.85,
     maxOutputTokens: 1024,
@@ -155,36 +168,43 @@ export async function POST(req: NextRequest) {
       const fullText = (await result.text).trim();
       if (!fullText) return;
 
-      const assistantMsg = await db.message.create({
-        data: { campaignId, role: "assistant", content: fullText },
-      });
+      const { data: assistantMsg } = await supabase
+        .from("messages")
+        .insert({ campaign_id: campaignId, role: "assistant", content: fullText })
+        .select("id")
+        .single();
 
       // Embed the assistant reply — so future turns can retrieve it.
-      try {
-        const asstEmbedding = await generateEmbedding(
-          headers["x-user-api-key"],
-          headers["x-embed-model"],
-          fullText,
-        );
-        await db.embedding.create({
-          data: {
-            messageId: assistantMsg.id,
-            campaignId,
+      if (assistantMsg) {
+        try {
+          const asstEmbedding = await generateEmbedding(
+            headers["x-openrouter-key"],
+            headers["x-embed-model"],
+            fullText,
+          );
+          await supabase.from("embeddings").insert({
+            message_id: assistantMsg.id,
+            campaign_id: campaignId,
             content: fullText,
-            vector: JSON.stringify(asstEmbedding),
-          },
-        });
-      } catch (e) {
-        console.error("[echolore] assistant embedding failed:", (e as Error).message);
+            embedding: asstEmbedding,
+          });
+        } catch (e) {
+          console.error("[echolore] assistant embedding failed:", (e as Error).message);
+        }
       }
 
       // --- H. Trigger background lorebook sync every 4th message ---
-      const totalMsgs = await db.message.count({ where: { campaignId } });
-      if (totalMsgs > 0 && totalMsgs % 4 === 0) {
+      const { count } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("campaign_id", campaignId);
+
+      if ((count ?? 0) > 0 && (count ?? 0) % 4 === 0) {
         void triggerLorebookSync({
           campaignId,
-          apiKey: headers["x-user-api-key"],
+          apiKey: headers["x-openrouter-key"],
           loreModel: headers["x-lore-model"],
+          supabase,
         }).catch((e) =>
           console.error("[echolore] lorebook sync failed:", (e as Error).message),
         );
@@ -200,31 +220,34 @@ export async function POST(req: NextRequest) {
 /**
  * Background lorebook updater.
  *
- * Triggered after every 4th message in a campaign. Uses a cheap/fast model
- * (gpt-4o-mini by default) to read recent chat and propose an updated
- * world_state JSON. The result is upserted into the world_state table.
+ * Triggered after every 4th message in a campaign. Uses a cheap/fast OpenRouter
+ * model to read recent chat and propose an updated world_state JSON. The result
+ * is upserted into the world_state table.
  */
 async function triggerLorebookSync(args: {
   campaignId: string;
   apiKey: string;
   loreModel: string;
+  supabase: ReturnType<typeof serverAdmin>;
 }) {
-  const { campaignId, apiKey, loreModel } = args;
+  const { campaignId, apiKey, loreModel, supabase } = args;
 
-  const [campaign, recentMsgs, currentState] = await Promise.all([
-    db.campaign.findUnique({ where: { id: campaignId } }),
-    db.message.findMany({
-      where: { campaignId },
-      orderBy: { createdAt: "desc" },
-      take: 4,
-      select: { role: true, content: true },
-    }),
-    db.worldState.findUnique({ where: { campaignId } }),
+  const [{ data: recentMsgs }, { data: ws }] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("role, content")
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: false })
+      .limit(4),
+    supabase
+      .from("world_state")
+      .select("state_json")
+      .eq("campaign_id", campaignId)
+      .maybeSingle(),
   ]);
-  if (!campaign) return;
 
-  const currentStateJson = currentState?.stateJson ?? "{}";
-  const recentChat = recentMsgs
+  const currentStateJson = JSON.stringify(ws?.state_json ?? {});
+  const recentChat = (recentMsgs ?? [])
     .reverse()
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n\n");
@@ -243,10 +266,9 @@ ${recentChat}
 
 # Updated JSON State:`;
 
-  const openai = createOpenAI({ apiKey });
-  const { generateText } = await import("ai");
+  const openrouter = createOpenRouter({ apiKey });
   const { text } = await generateText({
-    model: openai(loreModel),
+    model: openrouter(loreModel),
     prompt,
     temperature: 0.1,
     maxOutputTokens: 800,
@@ -266,9 +288,8 @@ ${recentChat}
     return;
   }
 
-  await db.worldState.upsert({
-    where: { campaignId },
-    create: { campaignId, stateJson: JSON.stringify(parsed) },
-    update: { stateJson: JSON.stringify(parsed) },
-  });
+  await supabase.from("world_state").upsert(
+    { campaign_id: campaignId, state_json: parsed },
+    { onConflict: "campaign_id" },
+  );
 }

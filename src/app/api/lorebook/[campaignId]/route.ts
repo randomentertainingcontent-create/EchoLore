@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { serverAdmin } from "@/lib/supabase";
 import { getUserIdFromHeaders } from "@/lib/auth";
 
 interface Params { params: Promise<{ campaignId: string }> }
@@ -13,12 +13,25 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { campaignId } = await params;
-  const owned = await db.campaign.findFirst({ where: { id: campaignId, userId } });
+  const supabase = serverAdmin();
+
+  // Verify ownership
+  const { data: owned } = await supabase
+    .from("campaigns")
+    .select("id")
+    .eq("id", campaignId)
+    .eq("user_id", userId)
+    .maybeSingle();
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const state = await db.worldState.findUnique({ where: { campaignId } });
+  const { data: state } = await supabase
+    .from("world_state")
+    .select("state_json, updated_at")
+    .eq("campaign_id", campaignId)
+    .maybeSingle();
+
   return NextResponse.json({
-    state: state ? JSON.parse(state.stateJson) : {},
-    updatedAt: state?.updatedAt.toISOString() ?? null,
+    state: state?.state_json ?? {},
+    updatedAt: state?.updated_at ?? null,
   });
 }
