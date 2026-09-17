@@ -1,105 +1,102 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/echolore/sidebar";
 import { ChatWindow } from "@/components/echolore/chat-window";
 import { NewCampaignModal } from "@/components/echolore/new-campaign-modal";
 import { SettingsModal } from "@/components/echolore/settings-modal";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import { useCampaignStore } from "@/store/campaign-store";
 import { useMockUser } from "@/hooks/use-mock-user";
+import { AuthPanel, AccountControl } from "@/components/echolore/auth-panel";
+import { BrandWordmark } from "@/components/echolore/brand";
 import { useByokStore } from "@/store/byok-store";
-import { useMounted } from "@/hooks/use-mounted";
 
 export default function Home() {
-  const { userId, ready } = useMockUser();
-  const { campaigns, activeId, activeWorldState, fetchAll, setActive, hydrateActive } = useCampaignStore();
-  const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
-  const mounted = useMounted();
+  const { userId, ready, recovery, accountVersion } = useMockUser();
+  const ownerId = useCampaignStore((s) => s.ownerId);
+  const keyOwnerId = useByokStore((s) => s.ownerId);
 
+  if (!ready) return <main className="el-app el-ember-bg flex min-h-dvh items-center justify-center bg-background px-6 text-foreground"><p role="status" className="text-sm text-muted-foreground">Checking your session…</p></main>;
+  if (!userId || recovery) return (
+    <main className="el-app el-ember-bg min-h-dvh bg-background px-6 py-8 text-foreground sm:px-10">
+      <div className="mx-auto max-w-5xl">
+        <BrandWordmark />
+        <div className="grid items-start gap-10 py-12 sm:py-20 md:grid-cols-2 md:gap-16">
+          <div>
+            <h1 className="max-w-md text-3xl font-semibold tracking-tight sm:text-4xl">Welcome to Echo<span className="text-primary">Lore</span></h1>
+            <p className="mt-4 max-w-prose text-base leading-8 text-muted-foreground">A world of your making. A narrator to explore it with. Shape the setting, choose your character, and decide what happens next.</p>
+            <p className="mt-6 max-w-prose text-sm leading-7 text-muted-foreground">Bring your own OpenRouter key when you’re ready to chat. Your saved key is cleared from this browser when you sign out or switch accounts.</p>
+          </div>
+          <AuthPanel key={`${accountVersion}:${recovery}`} />
+        </div>
+      </div>
+    </main>
+  );
+  if (ownerId !== userId || keyOwnerId !== userId) return <main className="el-app flex min-h-dvh items-center justify-center bg-background px-6 text-foreground"><p role="status">Preparing your account…</p></main>;
+  return <PrivateHome key={`${userId}:${accountVersion}`} userId={userId} />;
+}
+
+function PrivateHome({ userId }: { userId: string }) {
+  const ready = true;
+  const { campaigns, activeId, activeWorldState, fetchAll, setActive, hydrateActive } = useCampaignStore();
   const [newOpen, setNewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [worldsOpen, setWorldsOpen] = useState(false);
 
-  // Load campaigns when user is ready
   useEffect(() => {
-    if (ready && userId) fetchAll(userId);
+    if (ready && userId) void fetchAll(userId);
   }, [ready, userId, fetchAll]);
 
-  // When the active campaign changes, hydrate its world_state
   useEffect(() => {
-    if (ready && userId && activeId) hydrateActive(userId, activeId);
+    if (ready && userId && activeId) void hydrateActive(userId, activeId);
   }, [ready, userId, activeId, hydrateActive]);
 
-  // Listen for lorebook refresh events (fired by ChatWindow after streaming
-  // completes — the background lorebook updater may have modified world_state)
   useEffect(() => {
     if (!ready || !userId || !activeId) return;
-    const handler = () => hydrateActive(userId, activeId);
+    const handler = () => { void hydrateActive(userId, activeId); };
     window.addEventListener("echolore:refresh-lorebook", handler);
     return () => window.removeEventListener("echolore:refresh-lorebook", handler);
   }, [ready, userId, activeId, hydrateActive]);
-
-  // First-visit nudge: open Settings if no key set after hydration
-  useEffect(() => {
-    if (!mounted) return;
-    if (hasKey) return;
-    if (campaigns.length > 0) return;
-    const seen = localStorage.getItem("echolore:settings-seen");
-    if (seen) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSettingsOpen(true);
-    localStorage.setItem("echolore:settings-seen", "1");
-  }, [mounted, hasKey, campaigns.length]);
 
   const activeCampaign = useMemo(
     () => campaigns.find((c) => c.id === activeId) ?? null,
     [campaigns, activeId],
   );
 
-  const worldStateJson = activeWorldState;
+  const openNew = () => { setWorldsOpen(false); setNewOpen(true); };
+  const openSettings = () => { setWorldsOpen(false); setSettingsOpen(true); };
+  const retryWorlds = () => { if (ready && userId) void fetchAll(userId); };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
-      {/* Sidebar — fixed width on md+, hidden on small screens (could add a drawer later) */}
+    <div className="el-app flex h-dvh w-full overflow-hidden bg-background text-foreground">
       <div className="hidden h-full w-72 shrink-0 border-r border-border md:block">
-        <Sidebar
-          onNewCampaign={() => setNewOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
+        <Sidebar onNewCampaign={openNew} onOpenSettings={openSettings} onRetry={retryWorlds} />
       </div>
-
-      {/* Main column */}
       <div className="flex h-full min-w-0 flex-1 flex-col">
-        {/* Mobile top bar (sidebar replacement) */}
-        <div className="flex items-center justify-between border-b border-border bg-sidebar px-3 py-2 md:hidden">
-          <button
-            onClick={() => setNewOpen(true)}
-            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
-          >
-            + New World
-          </button>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="rounded-md px-2 py-1.5 text-xs text-muted-foreground"
-          >
-            Settings
-          </button>
+        <AccountControl />
+        <div className="el-mobile-bar flex shrink-0 items-center gap-3 border-b border-border bg-sidebar px-3 py-2 md:hidden">
+          <Sheet open={worldsOpen} onOpenChange={setWorldsOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" className="h-11 gap-2" aria-label="Open world navigation">
+                <Menu className="h-4 w-4" /> Worlds
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="el-world-sheet h-dvh w-[min(20rem,calc(100%-2rem))] gap-0 bg-sidebar p-0">
+              <SheetTitle className="sr-only">Your worlds</SheetTitle>
+              <SheetDescription className="sr-only">Choose a world, create a new one, or manage your API settings.</SheetDescription>
+              <Sidebar onNewCampaign={openNew} onOpenSettings={openSettings} onRetry={retryWorlds} onSelect={() => setWorldsOpen(false)} />
+            </SheetContent>
+          </Sheet>
+          <span className="min-w-0 truncate text-sm font-medium">{activeCampaign?.title ?? "EchoLore"}</span>
         </div>
-
-        <main className="flex-1 overflow-hidden">
-          <ChatWindow
-            campaign={activeCampaign}
-            worldStateJson={worldStateJson}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onOpenNewCampaign={() => setNewOpen(true)}
-          />
+        <main className="min-h-0 flex-1 overflow-hidden" id="story">
+          <ChatWindow campaign={activeCampaign} worldStateJson={activeWorldState} onOpenSettings={openSettings} onOpenNewCampaign={openNew} />
         </main>
       </div>
-
-      <NewCampaignModal
-        open={newOpen}
-        onOpenChange={setNewOpen}
-        onCreated={(id) => setActive(id)}
-      />
+      <NewCampaignModal open={newOpen} onOpenChange={setNewOpen} onCreated={(id) => setActive(id)} />
       <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );

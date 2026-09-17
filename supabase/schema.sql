@@ -28,13 +28,9 @@ end$$;
 -- TABLES
 -- ============================================================================
 
--- campaigns: one per "world" a user creates
--- NOTE: user_id is a plain uuid (no FK to auth.users) so EchoLore can use
--- mock single-user UUIDs without requiring Supabase Auth setup. When you wire
--- up real Supabase Auth, run supabase/patch-add-auth-fk.sql to restore the FK.
 create table if not exists public.campaigns (
   id                 uuid primary key default gen_random_uuid(),
-  user_id            uuid not null,  -- mock UUID (no FK until auth is wired)
+  user_id            uuid not null references auth.users(id) on delete cascade,
   title              text not null,
   world_description  text not null,
   user_persona       text not null,
@@ -181,7 +177,7 @@ language sql stable as $$
   from public.embeddings e
   where e.campaign_id = p_campaign_id
   order by e.embedding <=> p_query_vec
-  limit p_limit;
+  limit greatest(1, least(coalesce(p_limit, 5), 5));
 $$;
 
 -- Done. You should now see tables: campaigns, messages, embeddings, world_state

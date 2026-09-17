@@ -30,21 +30,12 @@ export interface WorldState {
 
 // --- BYOK (Bring Your Own Key) ---
 
-// EchoLore uses TWO keys:
-//   - OpenRouter (https://openrouter.ai) for chat + lorebook — one key gives
-//     access to hundreds of models including free ones.
-//   - Jina AI (https://jina.ai) for embeddings — free tier, 1024-dim by default.
-//
-// Why two keys? OpenRouter doesn't natively host an embeddings endpoint that's
-// both free and stable, so we route embeddings through Jina's generous free API.
-// Both keys live in localStorage only — never persisted server-side.
 export interface ByokConfig {
   openrouterKey: string;
-  jinaKey: string;
-  chatModel: string;     // OpenRouter model id, e.g. "meta-llama/llama-3.2-3b-instruct:free"
-  loreModel: string;     // OpenRouter model id (cheap/fast for lorebook updates)
-  embedModel: string;    // Jina model name, e.g. "jina-embeddings-v3"
-  embedDimensions: number; // Jina supports dimension truncation; we use 1024
+  chatModel: string;
+  loreModel: string;
+  embedModel: string;
+  embedDimensions: number;
 }
 
 // Form payload for the New Campaign setup modal

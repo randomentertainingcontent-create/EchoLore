@@ -1,7 +1,8 @@
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 
-/** EchoLore brand mark — a stylized "echo ripple" inside a flame ember. */
 export function BrandMark({ className }: { className?: string }) {
+  const gradientId = useId();
   return (
     <svg
       viewBox="0 0 32 32"
@@ -9,7 +10,7 @@ export function BrandMark({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <defs>
-        <linearGradient id="el-ember-grad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"  stopColor="oklch(0.84 0.17 55)" />
           <stop offset="100%" stopColor="oklch(0.58 0.18 35)" />
         </linearGradient>
@@ -17,7 +18,7 @@ export function BrandMark({ className }: { className?: string }) {
       {/* Outer flame */}
       <path
         d="M16 2 C 18 6, 23 8, 23 14 C 23 19, 20 22, 16 22 C 12 22, 9 19, 9 14 C 9 10, 12 8, 13 6 Z"
-        fill="url(#el-ember-grad)"
+        fill={`url(#${gradientId})`}
         opacity="0.9"
       />
       {/* Echo ripples */}
@@ -36,8 +37,8 @@ export function BrandWordmark({ className }: { className?: string }) {
         <span className="text-base font-semibold tracking-tight text-foreground">
           Echo<span className="text-primary">Lore</span>
         </span>
-        <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          BYOK · RAG roleplay
+        <span className="mt-1 text-xs text-muted-foreground">
+          Your world, unfolding
         </span>
       </div>
     </div>

@@ -49,11 +49,11 @@ EchoLore is an open-source, Bring-Your-Own-Key roleplay client designed to **max
 
 1. Create a new Supabase project.
 2. **Enable pgvector:** Dashboard → Database → Extensions → enable `vector`.
-3. **Install the schema:** Dashboard → SQL Editor → New query → paste the entire contents of [`supabase/schema.sql`](./supabase/schema.sql) → click **Run**.
-4. **Copy your keys:** Project Settings → API → copy:
-   - `Project URL` (looks like `https://yourproject.supabase.co`)
-   - `anon public` key (safe to expose in browser)
-   - `service_role` secret (SERVER-ONLY — bypasses RLS until real auth is wired up)
+3. **Install the database:** For a fresh database, run [`supabase/schema.sql`](./supabase/schema.sql), then [`supabase/hardening.sql`](./supabase/hardening.sql) in the SQL Editor. For an existing EchoLore database with the base tables installed, back it up and apply `hardening.sql`. The application requires its transactional creation and generation functions; `schema.sql` alone is not sufficient.
+4. **Enable Email authentication** in Supabase Auth. Set your app's Site URL and allow its `/` and `/?recovery=1` redirect URLs for account confirmation and password recovery.
+5. **Copy the project URL and anon public key** into `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Do not use a service-role key; requests run as the signed-in user with row-level security enforced.
+
+Legacy mock-user worlds do not automatically belong to new accounts. Arrange a backed-up, administrator-verified ownership migration before expecting them to appear. Do not claim old worlds using only a browser-stored UUID.
 
 ### Step 2: Install & run
 
@@ -61,11 +61,15 @@ EchoLore is an open-source, Bring-Your-Own-Key roleplay client designed to **max
 git clone https://github.com/randomentertainingcontent-create/EchoLore.git
 cd EchoLore
 bun install              # or: npm install
-cp .env.example .env     # then fill in the three Supabase values from Step 1
+cp .env.example .env.local
 bun run dev              # http://localhost:3000
 ```
 
-Open the app, click **Settings** (top-right), paste your OpenRouter API key, and click **New World** to begin.
+Fill the two Supabase values in `.env.local` before starting the app. In PowerShell, use `Copy-Item .env.example .env.local` instead of `cp`. Restart the development server after changing environment variables; production public environment changes require a rebuild.
+
+Open the app, create an account, confirm your email if required, and sign in. Create a world before adding your OpenRouter key in API settings. The key is required for narration, not world creation.
+
+If creation reports incomplete database setup, check that `hardening.sql` finished successfully. If permissions are denied, check authenticated table grants and row-level security policies. Do not disable authentication or RLS to work around creation errors. A passing mocked test does not verify your deployed database configuration.
 
 ### Step 3: Write good prompts
 

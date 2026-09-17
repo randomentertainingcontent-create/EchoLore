@@ -1,17 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Plus, MoreHorizontal, Sparkles, Trash2, Settings, Flame } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { Plus, MoreHorizontal, Trash2, Settings, Flame, Loader2 } from "lucide-react";
 import { BrandWordmark } from "./brand";
 import { useCampaignStore } from "@/store/campaign-store";
 import { useMockUser } from "@/hooks/use-mock-user";
@@ -19,166 +13,120 @@ import { useMounted } from "@/hooks/use-mounted";
 import { useByokStore } from "@/store/byok-store";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
+import type { Campaign } from "@/types/echolore";
 
 interface SidebarProps {
   onNewCampaign: () => void;
   onOpenSettings: () => void;
+  onRetry: () => void;
+  onSelect?: () => void;
 }
 
-export function Sidebar({ onNewCampaign, onOpenSettings }: SidebarProps) {
+export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onSelect }: SidebarProps) {
   const { userId, ready } = useMockUser();
-  const { campaigns, activeId, fetchAll, remove, setActive, loading } = useCampaignStore();
+  const { campaigns, activeId, remove, setActive, loading, error } = useCampaignStore();
   const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
   const hydrated = useMounted();
+  const [deleting, setDeleting] = useState<Campaign | null>(null);
+  const [pending, setPending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (ready && userId) fetchAll(userId);
-  }, [ready, userId, fetchAll]);
+  async function deleteWorld() {
+    if (!userId || !deleting || pending) return;
+    setPending(true);
+    setDeleteError(null);
+    try {
+      await remove(userId, deleting.id);
+      setDeleting(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Could not delete this world. Please try again.");
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
-    <aside className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-4 border-b border-sidebar-border">
+    <aside className="el-sidebar flex h-full min-h-0 w-full flex-col bg-sidebar text-sidebar-foreground" aria-label="World navigation">
+      <div className="border-b border-sidebar-border px-4 py-5">
         <BrandWordmark />
-        <div className="flex items-center gap-1.5">
-          <span
-            className={cn(
-              "h-2 w-2 rounded-full el-pulse-dot",
-              hydrated && hasKey ? "bg-primary" : "bg-muted-foreground/40",
-            )}
-            title={hasKey ? "OpenRouter key active" : "No OpenRouter key set"}
-          />
-        </div>
       </div>
-
-      {/* New campaign button */}
-      <div className="px-3 pt-3">
-        <Button
-          onClick={onNewCampaign}
-          className="w-full justify-start gap-2 bg-primary text-primary-foreground hover:bg-[var(--ember-strong)]"
-        >
-          <Plus className="h-4 w-4" />
-          New World
+      <div className="px-3 pt-4">
+        <Button onClick={onNewCampaign} className="h-11 w-full justify-start gap-2" disabled={!ready || !userId}>
+          <Plus className="h-4 w-4" /> New World
         </Button>
       </div>
-
-      {/* Campaign list */}
-      <div className="px-2 pt-4 pb-2">
-        <div className="px-2 pb-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Your worlds
+      <h2 className="px-5 pb-2 pt-6 text-sm font-medium text-muted-foreground">Your worlds</h2>
+      {loading && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Loading worlds…</p>}
+      {error && (
+        <div className="mx-3 mb-3 rounded-md border border-destructive/40 p-3 text-sm">
+          <p role="alert">Could not refresh your worlds.</p>
+          <p className="mt-1 text-xs text-muted-foreground break-words">{error}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry} disabled={loading || !ready || !userId}>Retry worlds</Button>
         </div>
-      </div>
-
-      <ScrollArea className="flex-1 px-2 el-scroll">
-        {loading ? (
-          <div className="px-2 py-4 text-sm text-muted-foreground">Loading…</div>
-        ) : campaigns.length === 0 ? (
-          <EmptySidebar />
+      )}
+      <ScrollArea className="min-h-0 flex-1 px-2 el-scroll">
+        {!loading && !error && campaigns.length === 0 ? (
+          <div className="px-3 py-6 text-sm text-muted-foreground">
+            <p>No worlds yet.</p>
+            <p className="mt-2 leading-relaxed">Create a world above. Start with a preset or make it your own.</p>
+          </div>
         ) : (
           <ul className="flex flex-col gap-1 pb-4">
-            {campaigns.map((c) => (
-              <li key={c.id}>
-                <button
-                  onClick={() => setActive(c.id)}
-                  className={cn(
-                    "group w-full rounded-md px-3 py-2 text-left transition-colors",
-                    "hover:bg-sidebar-accent",
-                    activeId === c.id && "bg-sidebar-accent",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <Flame
-                          className={cn(
-                            "h-3.5 w-3.5 shrink-0",
-                            activeId === c.id ? "text-primary" : "text-muted-foreground",
-                          )}
-                        />
-                        <span className="truncate text-sm font-medium text-sidebar-foreground">
-                          {c.title}
-                        </span>
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {c.worldDescription}
-                      </p>
-                      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/80">
-                        <span>
-                          {(c as { _count?: { messages?: number } })._count?.messages ?? 0} msgs
-                        </span>
-                        <span>·</span>
-                        <span>
-                          {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
-                        </span>
-                      </div>
-                    </div>
-
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => e.stopPropagation()}
-                          className="opacity-0 transition-opacity group-hover:opacity-100 rounded p-1 hover:bg-sidebar-accent-foreground/10"
-                          aria-label="Campaign menu"
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </span>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <DropdownMenuItem
-                          onClick={() => {
-                            if (userId && confirm(`Delete "${c.title}"? This cannot be undone.`)) {
-                              remove(userId, c.id);
-                            }
-                          }}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </button>
-              </li>
-            ))}
+            {campaigns.map((c) => {
+              const updated = new Date(c.updatedAt);
+              return (
+                <li key={c.id} className={cn("flex items-start rounded-md", activeId === c.id && "bg-sidebar-accent")}>
+                  <button
+                    onClick={() => { if (activeId !== c.id) setActive(c.id); onSelect?.(); }}
+                    aria-current={activeId === c.id ? "page" : undefined}
+                    className="min-w-0 flex-1 rounded-md px-3 py-3 text-left transition-colors hover:bg-sidebar-accent"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Flame className={cn("h-4 w-4 shrink-0", activeId === c.id ? "text-primary" : "text-muted-foreground")} />
+                      <span className="truncate text-sm font-medium" title={c.title}>{c.title}</span>
+                    </span>
+                    <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted-foreground">{c.worldDescription}</span>
+                    {!Number.isNaN(updated.getTime()) && <span className="mt-2 block text-xs text-muted-foreground">Updated {formatDistanceToNow(updated, { addSuffix: true })}</span>}
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="mt-1 h-11 w-11 shrink-0 text-muted-foreground" aria-label={`Actions for ${c.title}`}>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => { setDeleteError(null); setDeleting(c); }} className="text-destructive focus:text-destructive">
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete world
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </li>
+              );
+            })}
           </ul>
         )}
       </ScrollArea>
-
-      {/* Footer */}
-      <div className="border-t border-sidebar-border p-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
-          onClick={onOpenSettings}
-        >
-          <Settings className="h-4 w-4" />
-          API Keys {hasKey ? null : <Badge variant="outline" className="ml-1 text-[10px]">Required</Badge>}
+      <div className="el-safe-bottom border-t border-sidebar-border p-3">
+        <Button variant="ghost" className="h-11 w-full justify-start gap-2" onClick={onOpenSettings}>
+          <Settings className="h-4 w-4" /> API settings
         </Button>
-        <div className="mt-2 px-3 text-[10px] text-muted-foreground/70">
-          OpenRouter key · stored in browser only
-        </div>
+        <p className="mt-1 px-3 text-xs leading-relaxed text-muted-foreground">{hydrated && hasKey ? "Key saved on this browser · not verified" : "Bring an OpenRouter key to chat"}</p>
       </div>
+      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open && !pending) setDeleting(null); }}>
+        <AlertDialogContent className="el-dialog max-h-[calc(100dvh-2rem)] overflow-y-auto bg-card">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleting?.title}”?</AlertDialogTitle>
+            <AlertDialogDescription>This permanently deletes this world, its messages, and its lorebook. This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Keep world</AlertDialogCancel>
+            <AlertDialogAction disabled={pending || !userId} onClick={(e) => { e.preventDefault(); void deleteWorld(); }} className="bg-destructive text-white hover:bg-destructive/90">
+              {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{pending ? "Deleting…" : "Delete world"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
-  );
-}
-
-function EmptySidebar() {
-  return (
-    <div className="px-3 py-8 text-center">
-      <Sparkles className="mx-auto h-8 w-8 text-muted-foreground/40" />
-      <p className="mt-3 text-sm text-muted-foreground">
-        No worlds yet.
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground/70">
-        Click <span className="text-primary">New World</span> to begin.
-      </p>
-    </div>
   );
 }

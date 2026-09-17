@@ -1,12 +1,19 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Note: do NOT set `output: "standalone"` — that's for self-hosted Docker/Node
-  // deployments and breaks Vercel's build pipeline.
-  typescript: {
-    ignoreBuildErrors: true,
+  reactStrictMode: true,
+  poweredByHeader: false,
+  async headers() {
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      ],
+    }];
   },
-  reactStrictMode: false,
 };
 
 export default nextConfig;

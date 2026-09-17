@@ -1,145 +1,62 @@
-import { NextRequest, NextResponse } from "next/server";
-import { serverAdmin } from "@/lib/supabase";
-import { getUserIdFromHeaders } from "@/lib/auth";
-import type { NewCampaignInput } from "@/types/echolore";
+import { NextRequest } from "next/server";
+import { getRequestSupabase } from "@/lib/supabase";
+import { requireUserId } from "@/lib/auth";
+import { campaignSchema, errorResponse, readJson, RequestError } from "../_lib/validation";
 
-// Force dynamic rendering — never statically evaluate at build time.
-// This prevents Vercel's "Failed to collect page data" build errors when
-// env vars aren't available during the build phase.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/campaigns
- * List all campaigns for the current (mock) user.
- * Header: x-user-id
- */
+function mapCampaign(c: Record<string, unknown>) {
+  return {
+    id: c.id, userId: c.user_id, title: c.title,
+    worldDescription: c.world_description, userPersona: c.user_persona,
+    aiPersona: c.ai_persona, createdAt: c.created_at, updatedAt: c.updated_at,
+  };
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const userId = getUserIdFromHeaders(req.headers);
-    if (!userId) {
-      return NextResponse.json({ error: "Missing x-user-id header" }, { status: 401 });
-    }
-
-    const supabase = serverAdmin();
-    const { data, error } = await supabase
+    const userId = await requireUserId(req);
+    if (!userId) throw new RequestError(401, "Unauthorized");
+    const { data, error } = await getRequestSupabase(req)
       .from("campaigns")
       .select("id, user_id, title, world_description, user_persona, ai_persona, created_at, updated_at")
       .eq("user_id", userId)
-      .order("updated_at", { ascending: false });
-
-    if (error) {
-      return NextResponse.json(
-        { error: `Supabase error: ${error.message}. Did you run supabase/schema.sql?` },
-        { status: 500 },
-      );
-    }
-
-    const campaigns = (data ?? []).map((c) => ({
-      id: c.id,
-      userId: c.user_id,
-      title: c.title,
-      worldDescription: c.world_description,
-      userPersona: c.user_persona,
-      aiPersona: c.ai_persona,
-      createdAt: c.created_at,
-      updatedAt: c.updated_at,
-    }));
-
-    return NextResponse.json({ campaigns });
-  } catch (e) {
-    console.error("[echolore] GET /api/campaigns failed:", (e as Error).message);
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
-  }
+      .order("updated_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    return Response.json({ campaigns: (data ?? []).map(mapCampaign) });
+  } catch (error) { return errorResponse(error); }
 }
 
-/**
- * POST /api/campaigns
- * Create a new campaign ("New World" setup flow).
- * Body: { title, worldDescription, userPersona, aiPersona, startingState? }
- */
 export async function POST(req: NextRequest) {
   try {
-    const userId = getUserIdFromHeaders(req.headers);
-    if (!userId) {
-      return NextResponse.json({ error: "Missing x-user-id header" }, { status: 401 });
+    if (!await requireUserId(req)) throw new RequestError(401, "Unauthorized");
+    const parsed = campaignSchema.safeParse(await readJson(req));
+    if (!parsed.success) {
+      const field = parsed.error.issues[0]?.path[0];
+      const labels: Record<string, string> = { title: "World title", worldDescription: "World description", userPersona: "Your persona", aiPersona: "Narrator’s role" };
+      throw new RequestError(400, field === "startingState"
+        ? "Starting state must be a compact JSON object with at most 6 nesting levels, 100 entries per object, and 4,000 characters per value."
+        : `${typeof field === "string" ? labels[field] ?? "World details" : "World details"} is missing or invalid. Check the field and its character limit.`);
     }
-
-    let body: NewCampaignInput;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-    }
-
-    const { title, worldDescription, userPersona, aiPersona, startingState } = body;
-
-    if (!title?.trim())            return NextResponse.json({ error: "Title is required" }, { status: 400 });
-    if (!worldDescription?.trim()) return NextResponse.json({ error: "World description is required" }, { status: 400 });
-    if (!userPersona?.trim())      return NextResponse.json({ error: "User persona is required" }, { status: 400 });
-    if (!aiPersona?.trim())        return NextResponse.json({ error: "AI persona is required" }, { status: 400 });
-
-    const supabase = serverAdmin();
-
-    const { data: campaign, error: cErr } = await supabase
-      .from("campaigns")
-      .insert({
-        user_id: userId,
-        title: title.trim(),
-        world_description: worldDescription.trim(),
-        user_persona: userPersona.trim(),
-        ai_persona: aiPersona.trim(),
-      })
-      .select()
-      .single();
-
-    if (cErr || !campaign) {
-      return NextResponse.json(
-        { error: `Failed to create campaign: ${cErr?.message ?? "unknown"}` },
-        { status: 500 },
-      );
-    }
-
-    const stateJson = startingState && Object.keys(startingState).length > 0
-      ? startingState
-      : {};
-
-    // Validate starting state is a plain object (not array/primitive/null).
-    // Supabase JSONB accepts any JSON, but our schema expects an object.
-    if (startingState != null) {
-      if (typeof startingState !== "object" || Array.isArray(startingState)) {
-        return NextResponse.json(
-          { error: "Starting state must be a JSON object (e.g. {\"location\": \"...\"}), not an array or primitive." },
-          { status: 400 },
-        );
+    const body = parsed.data;
+    const { data, error } = await getRequestSupabase(req).rpc("create_campaign", {
+      p_title: body.title,
+      p_world_description: body.worldDescription,
+      p_user_persona: body.userPersona,
+      p_ai_persona: body.aiPersona,
+      p_starting_state: body.startingState ?? {},
+    }).single();
+    if (error) {
+      if (["PGRST202", "42P01", "42883"].includes(error.code)) {
+        throw new RequestError(503, "Database setup is incomplete. Ask the app administrator to apply supabase/schema.sql for a new database, then supabase/hardening.sql. Your world has not been created.");
       }
+      if (error.code === "42501") throw new RequestError(403, "The database denied world creation. Ask the app administrator to check authenticated permissions and row-level security policies.");
+      if (error.code === "23503") throw new RequestError(409, "Your account could not be linked to this world. Sign out and sign in again; if this continues, ask the administrator to check the database migration.");
+      throw new RequestError(503, "Could not save your world. The database may be unavailable. Your entries are kept; please try again shortly.");
     }
-
-    const { error: wsErr } = await supabase
-      .from("world_state")
-      .insert({
-        campaign_id: campaign.id,
-        state_json: stateJson,
-      });
-
-    if (wsErr) {
-      console.error("[echolore] world_state insert failed:", wsErr.message);
-    }
-
-    return NextResponse.json({
-      campaign: {
-        id: campaign.id,
-        userId: campaign.user_id,
-        title: campaign.title,
-        worldDescription: campaign.world_description,
-        userPersona: campaign.user_persona,
-        aiPersona: campaign.ai_persona,
-        createdAt: campaign.created_at,
-        updatedAt: campaign.updated_at,
-      },
-    }, { status: 201 });
-  } catch (e) {
-    console.error("[echolore] POST /api/campaigns failed:", (e as Error).message);
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
-  }
+    if (!data) throw new RequestError(503, "The database did not confirm creation. Refresh your worlds before trying again.");
+    return Response.json({ campaign: { ...mapCampaign(data as Record<string, unknown>), worldState: { stateJson: body.startingState ?? {} } } }, { status: 201 });
+  } catch (error) { return errorResponse(error); }
 }
