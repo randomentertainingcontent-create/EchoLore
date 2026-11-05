@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { browserClient } from "@/lib/supabase";
 import type { ByokConfig } from "@/types/echolore";
 
 export const HDR_OPENROUTER_KEY = "x-openrouter-key";
@@ -24,13 +23,7 @@ const byokSchema = z.object({
 
 export type ByokHeaders = z.infer<typeof byokSchema>;
 
-export async function buildAuthHeaders(): Promise<{ Authorization: string }> {
-  const { data, error } = await browserClient().auth.getSession();
-  if (error || !data.session?.access_token) throw new Error("Please sign in");
-  return { Authorization: `Bearer ${data.session.access_token}` };
-}
-
-export async function buildByokHeaders(_userId: string, config: ByokConfig): Promise<ByokHeaders & { Authorization: string }> {
+export function buildByokHeaders(config: ByokConfig): ByokHeaders {
   const headers = byokSchema.safeParse({
     [HDR_OPENROUTER_KEY]: config.openrouterKey,
     [HDR_CHAT_MODEL]: config.chatModel.trim() || DEFAULT_CHAT_MODEL,
@@ -38,8 +31,8 @@ export async function buildByokHeaders(_userId: string, config: ByokConfig): Pro
     [HDR_EMBED_MODEL]: EMBED_MODEL,
     [HDR_EMBED_DIMENSIONS]: String(EMBED_DIMENSIONS),
   });
-  if (!headers.success) throw new Error("Your API key or a model name has unsupported characters. Check API settings.");
-  return { ...headers.data, ...await buildAuthHeaders() };
+  if (!headers.success) throw new Error("Your API key or a model name has unsupported characters. Check Settings.");
+  return headers.data;
 }
 
 export function readByokHeaders(headers: Headers): ByokHeaders {

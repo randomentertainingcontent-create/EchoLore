@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import { requireUserId } from "@/lib/auth";
 import { HDR_OPENROUTER_KEY } from "@/lib/byok/headers";
 import { errorResponse, RequestError } from "../_lib/validation";
 
@@ -9,7 +8,6 @@ export const dynamic = "force-dynamic";
 /** Verify an OpenRouter key and report its credit status. The key is never stored or logged. */
 export async function POST(req: NextRequest) {
   try {
-    if (!await requireUserId(req)) throw new RequestError(401, "Unauthorized");
     const key = req.headers.get(HDR_OPENROUTER_KEY)?.trim();
     if (!key || !/^[\x21-\x7e]{1,512}$/.test(key)) throw new RequestError(400, "Enter an OpenRouter API key first.");
     const res = await fetch("https://openrouter.ai/api/v1/key", {

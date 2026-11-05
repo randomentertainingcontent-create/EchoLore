@@ -1,5 +1,3 @@
-import { NextRequest } from "next/server";
-import { requireUserId } from "@/lib/auth";
 import { errorResponse, RequestError } from "../_lib/validation";
 import type { ModelSummary } from "@/types/echolore";
 
@@ -15,9 +13,8 @@ function perMillion(value: unknown): number | null {
 }
 
 /** OpenRouter's public text-model catalogue, trimmed and cached for an hour. */
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    if (!await requireUserId(req)) throw new RequestError(401, "Unauthorized");
     if (!cache || Date.now() - cache.at > TTL) {
       const res = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(10000), headers: { accept: "application/json" } });
       if (!res.ok) throw new RequestError(502, "Could not load the model list from OpenRouter.");

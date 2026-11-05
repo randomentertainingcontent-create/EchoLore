@@ -1,8 +1,7 @@
 import { z } from "zod";
 
-export const uuidSchema = z.string().uuid();
 export const MAX_MESSAGE_LENGTH = 16000;
-export const MAX_BODY_BYTES = 131072;
+export const MAX_BODY_BYTES = 262144;
 
 export function isLoreState(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -31,13 +30,6 @@ export function isLoreState(value: unknown): value is Record<string, unknown> {
 
 export const loreStateSchema = z.custom<Record<string, unknown>>(isLoreState);
 const text = (max: number) => z.string().trim().min(1).max(max).refine((value) => !value.includes("\0"));
-export const campaignSchema = z.object({
-  title: text(120),
-  worldDescription: text(8000),
-  userPersona: text(4000),
-  aiPersona: text(4000),
-  startingState: loreStateSchema.optional(),
-}).strict();
 
 export const RESPONSE_LENGTHS = ["short", "medium", "long"] as const;
 export type ResponseLength = (typeof RESPONSE_LENGTHS)[number];
@@ -46,48 +38,33 @@ export const chatOptionsSchema = z.object({
   creativity: z.number().finite().min(0).max(1.5).optional(),
 }).strict();
 
-export const campaignPatchSchema = z.object({
-  title: text(120).optional(),
-  worldDescription: text(8000).optional(),
-  userPersona: text(4000).optional(),
-  aiPersona: text(4000).optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, "Nothing to update");
+const turn = z.object({ role: z.enum(["user", "assistant"]), content: text(MAX_MESSAGE_LENGTH) }).strict();
 
-export const messageEditSchema = z.object({
-  messageId: uuidSchema,
-  content: text(MAX_MESSAGE_LENGTH),
+/** Everything the narrator needs for one reply. The browser owns the story; the server keeps nothing. */
+export const chatSchema = z.object({
+  world: z.object({ worldDescription: text(8000), userPersona: text(4000), aiPersona: text(4000) }).strict(),
+  worldState: loreStateSchema,
+  history: z.array(turn).max(40),
+  memories: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string().min(1).max(8000),
+    similarity: z.number().finite().min(-1).max(1),
+    createdAt: z.string().max(40).optional(),
+  }).strict()).max(8),
+  message: text(MAX_MESSAGE_LENGTH),
+  options: chatOptionsSchema.optional(),
 }).strict();
 
-export const lorePutSchema = z.object({ state: loreStateSchema }).strict();
+export const embedSchema = z.object({ texts: z.array(text(MAX_MESSAGE_LENGTH)).min(1).max(16) }).strict();
 
-export const chatSchema = z.object({
-  campaignId: uuidSchema,
-  options: chatOptionsSchema.optional(),
-  message: text(MAX_MESSAGE_LENGTH).optional(),
-  id: z.string().max(200).optional(),
-  messageId: z.string().max(200).optional(),
-  trigger: z.literal("submit-message").optional(),
-  messages: z.array(z.object({
-    id: z.string().max(200).optional(),
-    role: z.enum(["user", "assistant", "system"]),
-    content: z.string().max(MAX_MESSAGE_LENGTH).optional(),
-    parts: z.array(z.object({
-      type: z.string().max(100),
-      text: z.string().max(MAX_MESSAGE_LENGTH).optional(),
-    })).max(32).optional(),
-  })).max(200).optional(),
-}).strict().transform((body) => {
-  const last = body.messages?.at(-1);
-  const message = body.message ?? (last?.role === "user"
-    ? last.parts?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("").trim() || last.content?.trim()
-    : undefined);
-  return { campaignId: body.campaignId, message, options: body.options ?? {} };
-}).pipe(z.object({ campaignId: uuidSchema, message: text(MAX_MESSAGE_LENGTH), options: chatOptionsSchema }));
+export const loreUpdateSchema = z.object({
+  state: loreStateSchema,
+  recent: z.array(turn).min(1).max(8),
+}).strict();
 
 export class RequestError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
-
 export async function readJson(req: Request): Promise<unknown> {
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     throw new RequestError(415, "Expected JSON");

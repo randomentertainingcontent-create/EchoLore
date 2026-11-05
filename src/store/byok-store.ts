@@ -15,53 +15,41 @@ export const DEFAULT_BYOK: ByokConfig = {
 
 interface ByokState {
   config: ByokConfig;
-  ownerId: string | null;
-  setOwner: (ownerId: string | null) => void;
-  clearKey: () => void;
   setOpenrouterKey: (key: string) => void;
   setChatModel: (m: string) => void;
   setLoreModel: (m: string) => void;
   clearAll: () => void;
-  hasKey: () => boolean;
 }
 
-function savedSettings(persisted: unknown, preserveKey: boolean) {
-  const saved = persisted && typeof persisted === "object" ? persisted as Record<string, unknown> : {};
-  const old = saved.config && typeof saved.config === "object" ? saved.config as Record<string, unknown> : {};
-  const ownerId = typeof saved.ownerId === "string" && saved.ownerId ? saved.ownerId : null;
-  return {
-    ownerId,
-    config: {
-      ...DEFAULT_BYOK,
-      chatModel: typeof old.chatModel === "string" && old.chatModel.trim() ? old.chatModel : DEFAULT_BYOK.chatModel,
-      loreModel: typeof old.loreModel === "string" && old.loreModel.trim() ? old.loreModel : DEFAULT_BYOK.loreModel,
-      openrouterKey: preserveKey && ownerId && typeof old.openrouterKey === "string" ? old.openrouterKey.trim() : "",
-    },
-  };
-}
-
+/** The OpenRouter key and model choices. Stored only in this browser. */
 export const useByokStore = create<ByokState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       config: { ...DEFAULT_BYOK },
-      ownerId: null,
-      setOwner: (ownerId) => set((s) => ({
-        ownerId,
-        config: { ...s.config, openrouterKey: ownerId && s.ownerId === ownerId ? s.config.openrouterKey : "" },
-      })),
-      clearKey: () => set((s) => ({ config: { ...s.config, openrouterKey: "" } })),
-      setOpenrouterKey: (key) => set((s) => ({ config: { ...s.config, openrouterKey: s.ownerId ? key.trim() : "" } })),
+      setOpenrouterKey: (key) => set((s) => ({ config: { ...s.config, openrouterKey: key.trim() } })),
       setChatModel: (m) => set((s) => ({ config: { ...s.config, chatModel: m } })),
       setLoreModel: (m) => set((s) => ({ config: { ...s.config, loreModel: m } })),
       clearAll: () => set({ config: { ...DEFAULT_BYOK } }),
-      hasKey: () => Boolean(get().ownerId && get().config.openrouterKey.trim()),
     }),
     {
       name: "echolore-byok",
-      version: 6,
-      partialize: (s) => ({ config: s.config, ownerId: s.ownerId }),
-      migrate: (persisted) => savedSettings(persisted, false),
-      merge: (persisted, current) => ({ ...current, ...savedSettings(persisted, true) }),
+      version: 7,
+      partialize: (s) => ({ config: s.config }),
+      migrate: (persisted) => persisted as { config: ByokConfig },
+      merge: (persisted, current) => {
+        const saved = persisted && typeof persisted === "object" ? persisted as Record<string, unknown> : {};
+        const old = saved.config && typeof saved.config === "object" ? saved.config as Record<string, unknown> : {};
+        const text = (value: unknown, fallback: string) => (typeof value === "string" && value.trim() ? value : fallback);
+        return {
+          ...current,
+          config: {
+            ...DEFAULT_BYOK,
+            chatModel: text(old.chatModel, DEFAULT_BYOK.chatModel),
+            loreModel: text(old.loreModel, DEFAULT_BYOK.loreModel),
+            openrouterKey: typeof old.openrouterKey === "string" ? old.openrouterKey.trim() : "",
+          },
+        };
+      },
     },
   ),
 );

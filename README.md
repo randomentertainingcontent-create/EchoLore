@@ -2,10 +2,12 @@
 
 **Stories that remember.** EchoLore is an open-source, bring-your-own-key roleplay app. Build any world, pick who you are, and play it out with an AI narrator that keeps track of where you are, what you carry, who you've met and what you promised.
 
+**No accounts, no database.** Everything is saved in your browser. The server only relays requests to OpenRouter with your own key and stores nothing.
+
 Instead of stuffing the whole chat into every request, EchoLore combines three kinds of memory:
 
 1. **Working memory**: the most recent messages, verbatim.
-2. **Recall**: every message is embedded, and the most relevant past moments are retrieved by meaning (pgvector), so a detail from 200 messages ago can come back.
+2. **Recall**: every message is embedded and the most relevant past moments are found by meaning, right in your browser, so a detail from 200 messages ago can come back.
 3. **The lorebook**: a JSON record of the world state that a background "keeper" model updates every couple of turns, and that you can read and edit.
 
 ---
@@ -45,11 +47,11 @@ The interface is built around a night-camp theme: a hand-drawn pixel-art campfir
 | Layer          | Choice |
 | -------------- | ------ |
 | Frontend       | Next.js 16 (App Router), React 19, Tailwind CSS 4, shadcn/ui, Zustand |
+| Storage        | IndexedDB in the browser (worlds, messages, memory vectors, lorebooks) |
 | AI             | Vercel AI SDK 6 + `@openrouter/ai-sdk-provider` |
 | Story model    | `openai/gpt-oss-120b:free` by default (any OpenRouter model works) |
 | Lorebook model | `openai/gpt-oss-20b:free` by default |
 | Embeddings     | `openai/text-embedding-3-small` via OpenRouter (1536 dimensions, fixed) |
-| Database/auth  | Supabase: PostgreSQL + pgvector + anonymous Auth + Row Level Security |
 
 One OpenRouter key powers the story, the lorebook keeper and memory embeddings.
 
@@ -57,75 +59,52 @@ One OpenRouter key powers the story, the lorebook keeper and memory embeddings.
 
 ## Quick start
 
-### Prerequisites
-- Node.js 20+ (or Bun 1.1+)
-- An OpenRouter API key: https://openrouter.ai/keys (free models need no credit)
-- A Supabase project: https://supabase.com/dashboard (free tier is fine)
+You need Node.js 20+ and, to play, an OpenRouter API key from https://openrouter.ai/keys (free models need no credit). There's nothing else to set up: no database, no environment variables.
 
-### 1. Set up Supabase
-1. Create a project and enable the `vector` extension (Database → Extensions).
-2. In the SQL Editor run [`supabase/schema.sql`](./supabase/schema.sql), then [`supabase/hardening.sql`](./supabase/hardening.sql). The app needs the transactional functions from `hardening.sql`; `schema.sql` alone is not enough. For an existing EchoLore database, back it up and apply `hardening.sql`.
-3. Turn on **Allow anonymous sign-ins** (Authentication → Sign In / Providers). There is no sign-up form: each browser gets a private guest account automatically, and row-level security keeps its worlds to itself.
-4. Copy the project URL and the **anon** public key. Never use the service-role key: every request runs as the signed-in user with RLS enforced.
-
-No extra migration is needed for this release: regenerate, rewind, message edits, world edits and lorebook edits all use the existing tables and their row-level security policies.
-
-### 2. Install and run
 ```bash
 git clone https://github.com/randomentertainingcontent-create/EchoLore.git
 cd EchoLore
-npm install            # or: bun install
-cp .env.example .env.local
+npm install
 npm run dev            # http://localhost:3000
 ```
 
-Fill `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local` (PowerShell: `Copy-Item .env.example .env.local`). Restart the dev server after changing environment variables; production builds need a rebuild.
+Open the app, pick a template (or start from scratch), add your OpenRouter key from the banner or **Settings**, and press **Begin the story**.
 
-### 3. Play
-Open the app (no account needed), pick a template or start from scratch, add your OpenRouter key from the banner or **Settings**, and press **Begin the story**.
+**Deploying:** import the repo into Vercel (or any Node host) and deploy. No configuration is needed.
 
-Guest worlds belong to that browser. Clearing its site data, or switching browsers or devices, means starting fresh.
-
-If the app says "The fire won’t light", anonymous sign-ins are off or the Supabase project is paused. If world creation reports incomplete database setup, check that `hardening.sql` finished. If permissions are denied, check authenticated grants and RLS policies. Don't disable auth or RLS to work around errors.
+### Your data
+Worlds live in the browser you play in. Clearing that browser's site data, using private mode, or switching devices means starting fresh, so use **Settings → Data → Download backup** now and then. **Restore backup** brings worlds back (on any device), and **Erase all data** wipes this browser.
 
 ---
 
-## How a turn works (`POST /api/chat`)
+## How a turn works
 
-1. Verify the Supabase session and that the world belongs to the user.
-2. Take the world's **generation lease**, so two replies (or a reply and a rewind) can never interleave.
-3. Load the lorebook and up to 16 recent messages (bounded to ~24k characters) as working memory.
-4. Embed the player's move and fetch the top 5 similar past messages, dropping any already in working memory and anything below 0.2 similarity. Recalled memories are labelled by speaker and ordered oldest first.
-5. Compile the prompt ([`compile-prompt.ts`](./src/lib/rag/compile-prompt.ts)): roleplay rules, setting inference for thin prompts, the world and both personas, the lorebook, recalled events and the chosen reply length.
-6. Stream the reply. Reasoning tokens are excluded.
-7. Save the move and the reply atomically with their embeddings (`complete_generation`). If the player presses **Stop**, the partial reply is saved instead.
-8. After the response has finished streaming, and every 4th stored message, the lorebook keeper updates the world state in the background, then the lease is released. The client shows "Updating" and refreshes the lorebook when it lands.
+1. **In the browser:** take up to 16 recent messages (bounded to ~24k characters) as working memory, embed the player's move through `POST /api/embed`, and find the 5 most similar older messages in IndexedDB by cosine similarity. Anything already in working memory, or below 0.2 similarity, is skipped.
+2. **`POST /api/chat`** receives the world, the lorebook, working memory, recalled memories and the move. It compiles the prompt ([`compile-prompt.ts`](./src/lib/rag/compile-prompt.ts)): roleplay rules, setting inference for thin prompts, the world and both personas, the lorebook, recalled events (speaker-labelled, oldest first) and the chosen reply length. It then streams the reply from OpenRouter. Reasoning tokens are excluded, and the route stores nothing.
+3. **In the browser:** the move and the reply are saved to IndexedDB, and the reply is embedded for future recall. If the player presses **Stop**, the partial reply is saved instead.
+4. Every 4th stored message, the browser sends the lorebook and recent messages to **`POST /api/lore`**, and saves the updated state the keeper returns. The Lorebook button pulses while it works.
 
-Provider errors become actionable messages (bad key, out of credits, rate-limited free model, unknown model, timeouts). If a previous reply still holds the lease, the client waits and retries automatically instead of failing.
+Regenerate, rewind and edits are instant local operations. Provider errors become actionable messages (bad key, out of credits, rate-limited free model, unknown model, timeouts).
 
-### API
+### API (all stateless)
 
-| Route | Methods | Purpose |
-| ----- | ------- | ------- |
-| `/api/campaigns` | GET, POST | List and create worlds |
-| `/api/campaigns/[id]` | GET, PATCH, DELETE | Read (with lorebook), edit, delete a world |
-| `/api/messages/[campaignId]` | GET, PATCH, DELETE `?from=<id>` | History, edit a message, rewind from a message |
-| `/api/lorebook/[campaignId]` | GET, PUT | Read or replace the lorebook |
-| `/api/chat` | POST | Generate the next reply (streaming) |
+| Route | Method | Purpose |
+| ----- | ------ | ------- |
+| `/api/chat` | POST | Stream the next reply |
+| `/api/embed` | POST | Memory vectors for story text |
+| `/api/lore` | POST | Updated lorebook state from recent messages |
 | `/api/models` | GET | OpenRouter text-model catalogue (cached for an hour) |
 | `/api/key-check` | POST | Verify an OpenRouter key and report credit status |
-| `/api/setup-check` | GET | Check the database schema is installed |
 
-All routes require a Supabase bearer token and validate input with Zod.
+Routes that call OpenRouter need the player's key in the `x-openrouter-key` header. Request bodies are size-limited and validated strictly with Zod.
 
 ---
 
-## Security model
-- Every browser gets its own Supabase guest (anonymous) user, so nobody needs to sign up and nobody can read another browser's worlds.
-- The OpenRouter key lives in the browser's `localStorage`, is sent per request in the `x-openrouter-key` header, used for that call and discarded. It's never stored server-side or logged.
-- The server talks to Supabase with the user's own access token and the anon key, so row-level security scopes every query to the owner.
-- Request bodies are size-limited and parsed strictly; lorebook JSON is bounded (6 levels deep, 100 keys per object, 4,000 characters per value, 16 KB total).
-- Composer drafts are kept in memory only.
+## Privacy and security
+- No accounts and no server-side storage. Stories, lorebooks and memory stay in the browser's IndexedDB.
+- The OpenRouter key is kept in the browser's `localStorage`, sent with each request in a header, used for that call and discarded. It's never stored or logged on the server.
+- Story text is sent to OpenRouter (and the model provider you choose) to generate replies, as with any AI chat app.
+- Lorebook JSON is bounded (6 levels deep, 100 keys per object, 4,000 characters per value, 16 KB total), and backups are validated before they're restored.
 
 ---
 
@@ -133,32 +112,30 @@ All routes require a Supabase bearer token and validate input with Zod.
 ```
 src/
 ├── app/
-│   ├── page.tsx                  # Landing/sign-in and the signed-in app shell
+│   ├── page.tsx                  # App shell
 │   ├── globals.css               # Theme tokens, story typography, pixel-art animation
-│   └── api/                      # Route handlers (see the API table above)
-│       └── _lib/                 # Validation, generation lease, provider error mapping
+│   └── api/                      # Stateless routes: chat, embed, lore, models, key-check
+│       └── _lib/                 # Validation and provider error mapping
 ├── components/echolore/
 │   ├── chat-window.tsx           # Story view, composer (Do/Say/Direct), quick actions, rewind
 │   ├── message-item.tsx          # Message rendering, dialogue highlighting, edit/copy/regenerate
 │   ├── lorebook-panel.tsx        # Structured lorebook view and JSON editor
 │   ├── new-campaign-modal.tsx    # Template gallery and world wizard
 │   ├── edit-world-modal.tsx      # Edit an existing world
-│   ├── settings-modal.tsx        # Connection, models and storytelling settings
+│   ├── settings-modal.tsx        # Connection, models, storytelling and data (backup/restore)
 │   ├── model-picker.tsx          # Searchable OpenRouter model catalogue
-│   ├── sidebar.tsx               # World list, search, duplicate/delete, account
+│   ├── sidebar.tsx               # World list, search, duplicate/delete
 │   ├── presets.ts                # World templates
 │   └── pixel-art.tsx             # Pixel campfire, wordmark and genre sigils (SVG)
 ├── lib/
+│   ├── local-db.ts               # IndexedDB storage, backups, local memory search
+│   ├── story-client.ts           # Browser calls to /api/embed and /api/lore
 │   ├── rag/                      # Prompt compiler and embeddings
-│   ├── byok/headers.ts           # BYOK header building and validation
-│   └── supabase.ts, auth.ts      # Per-request Supabase clients and session checks
+│   └── byok/headers.ts           # BYOK header building and validation
 └── store/                        # Zustand stores: worlds, API key, preferences
-supabase/
-├── schema.sql                    # Tables, pgvector index, RLS
-└── hardening.sql                 # Leases, transactional functions, constraints
 tests/
-├── backend.test.ts               # Route and validation unit tests (no network)
-└── e2e/                          # Playwright flows against fully mocked services
+├── backend.test.ts               # Route, validation, recall and backup unit tests (no network)
+└── e2e/                          # Playwright flows against mocked OpenRouter routes
 ```
 
 ---
@@ -168,16 +145,15 @@ tests/
 npm run typecheck
 npm run lint
 npm test                 # unit tests, no network
-npm run test:e2e         # Playwright, desktop + mobile, all services mocked
+npm run test:e2e         # Playwright, desktop + mobile, model routes mocked
 ```
 
-The E2E suite covers the guest session, world creation, streaming, failure recovery, templates, Say mode, regenerate, rewind, message edits, lorebook editing, world edits, the model picker, key checks and reload persistence. Playwright defaults to Microsoft Edge; set `PLAYWRIGHT_CHANNEL=chrome` or point `PLAYWRIGHT_EXECUTABLE_PATH` at a Chromium binary. `SCREENS=1 npm run test:e2e -- zz-screens` captures screenshots of every major screen for visual review.
-
-`scripts/` also has Python stress and edge-case scripts for a live deployment.
+The E2E suite covers world creation, streaming, reload persistence, failure recovery, templates, Say mode, memory and working-memory payloads, regenerate, rewind, message edits, the lorebook keeper and editor, world edits, the model picker, key checks, and backup/erase/restore. Playwright defaults to Microsoft Edge; set `PLAYWRIGHT_CHANNEL=chrome` or point `PLAYWRIGHT_EXECUTABLE_PATH` at a Chromium binary. `SCREENS=1 npm run test:e2e -- zz-screens` captures screenshots of every major screen for visual review.
 
 ---
 
 ## Roadmap
+- Optional cloud sync across devices
 - Character card import (SillyTavern V2 JSON/PNG)
 - Multiple alternate replies ("swipes") per turn
 - A collapsible "what the narrator remembered" panel for each reply

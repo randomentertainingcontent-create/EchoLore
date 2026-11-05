@@ -11,17 +11,12 @@ import type { WorldTemplate } from "@/components/echolore/presets";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import { useCampaignStore } from "@/store/campaign-store";
-import { ensureSession, useMockUser } from "@/hooks/use-mock-user";
-import { BrandWordmark } from "@/components/echolore/brand";
+import { useMounted } from "@/hooks/use-mounted";
 import { PixelCampfire } from "@/components/echolore/pixel-art";
-import { useByokStore } from "@/store/byok-store";
 
 export default function Home() {
-  const { userId, ready, accountVersion, error, configured } = useMockUser();
-  const ownerId = useCampaignStore((s) => s.ownerId);
-  const keyOwnerId = useByokStore((s) => s.ownerId);
-
-  if (!ready || (userId && (ownerId !== userId || keyOwnerId !== userId))) {
+  const mounted = useMounted();
+  if (!mounted) {
     return (
       <main className="el-app el-ember-bg flex min-h-dvh flex-col items-center justify-center gap-5 bg-background px-6 text-foreground">
         <PixelCampfire className="h-16 w-16" />
@@ -29,22 +24,10 @@ export default function Home() {
       </main>
     );
   }
-  if (!userId) {
-    return (
-      <main className="el-app el-ember-bg flex min-h-dvh items-center justify-center bg-background px-6 text-foreground">
-        <div className="max-w-md">
-          <BrandWordmark />
-          <h1 className="el-display mt-8 text-2xl">The fire won’t light</h1>
-          <p role="alert" className="mt-3 text-sm leading-7 text-muted-foreground">{error ?? "Couldn’t start a session."}</p>
-          {configured && <Button className="mt-5 h-11" onClick={() => void ensureSession()}>Retry</Button>}
-        </div>
-      </main>
-    );
-  }
-  return <PrivateHome key={`${userId}:${accountVersion}`} userId={userId} />;
+  return <App />;
 }
 
-function PrivateHome({ userId }: { userId: string }) {
+function App() {
   const { campaigns, activeId, activeWorldState, activeWorldStateUpdatedAt, lorePending, fetchAll, hydrateActive } = useCampaignStore();
   const [newOpen, setNewOpen] = useState(false);
   const [newTemplate, setNewTemplate] = useState<WorldTemplate | null>(null);
@@ -53,16 +36,16 @@ function PrivateHome({ userId }: { userId: string }) {
   const [worldsOpen, setWorldsOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
 
-  useEffect(() => { void fetchAll(userId); }, [userId, fetchAll]);
-  useEffect(() => { if (activeId) void hydrateActive(userId, activeId); }, [userId, activeId, hydrateActive]);
+  useEffect(() => { void fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (activeId) void hydrateActive(activeId); }, [activeId, hydrateActive]);
 
   const activeCampaign = useMemo(() => campaigns.find((c) => c.id === activeId) ?? null, [campaigns, activeId]);
   const editCampaign = useMemo(() => campaigns.find((c) => c.id === editId) ?? null, [campaigns, editId]);
 
   const openNew = (template: WorldTemplate | null = null) => { setWorldsOpen(false); setNewTemplate(template); setNewOpen(true); };
   const openSettings = (tab: SettingsTab = "connection") => { setWorldsOpen(false); setSettingsTab(tab); setSettingsOpen(true); };
-  const retryWorlds = () => { void fetchAll(userId); };
-  const refreshLore = useCallback(async () => { if (activeId) await hydrateActive(userId, activeId); }, [userId, activeId, hydrateActive]);
+  const retryWorlds = () => { void fetchAll(); };
+  const refreshLore = useCallback(async () => { if (activeId) await hydrateActive(activeId); }, [activeId, hydrateActive]);
 
   const sidebarProps = {
     onNewCampaign: () => openNew(null),

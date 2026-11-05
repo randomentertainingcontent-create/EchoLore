@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Flame, Loader2, Wand2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useCampaignStore } from "@/store/campaign-store";
-import { useMockUser } from "@/hooks/use-mock-user";
 import { cn } from "@/lib/utils";
 import { WORLD_TEMPLATES, type WorldTemplate } from "./presets";
 import { Sigil } from "./pixel-art";
@@ -53,7 +52,6 @@ function templateForm(template: WorldTemplate | null | undefined): Form {
 }
 
 function NewCampaignBody({ onOpenChange, onCreated, initialTemplate }: Omit<NewCampaignModalProps, "open">) {
-  const { userId, ready } = useMockUser();
   const create = useCampaignStore((s) => s.create);
   const { toast } = useToast();
   const [step, setStep] = useState<"choose" | "details">(initialTemplate ? "details" : "choose");
@@ -123,7 +121,7 @@ function NewCampaignBody({ onOpenChange, onCreated, initialTemplate }: Omit<NewC
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!ready || !userId || pending.current) return;
+    if (pending.current) return;
     if (![form.title, form.worldDescription, form.userPersona, form.aiPersona].every((value) => value.trim())) {
       setSaveError("Required fields cannot contain only spaces.");
       return;
@@ -145,7 +143,7 @@ function NewCampaignBody({ onOpenChange, onCreated, initialTemplate }: Omit<NewC
     setSaving(true);
     setSaveError(null);
     try {
-      const campaign = await create(userId, {
+      const campaign = await create({
         title: form.title.trim(), worldDescription: form.worldDescription.trim(),
         userPersona: form.userPersona.trim(), aiPersona: form.aiPersona.trim(), startingState,
       });
@@ -258,7 +256,7 @@ function NewCampaignBody({ onOpenChange, onCreated, initialTemplate }: Omit<NewC
             <Button type="button" variant="ghost" onClick={() => setStep("choose")} disabled={saving} className="gap-2"><ArrowLeft className="h-4 w-4" /> Templates</Button>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-              <Button type="submit" disabled={saving || !ready || !userId} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}{saving ? "Creating world…" : "Create world"}</Button>
+              <Button type="submit" disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}{saving ? "Creating world…" : "Create world"}</Button>
             </div>
           </DialogFooter>
         </form>

@@ -83,7 +83,6 @@ function LoreValue({ name, value, depth }: { name: string; value: unknown; depth
 
 interface LorebookPanelProps {
   campaign: Campaign;
-  userId: string;
   worldStateJson: string | null;
   updatedAt: string | null;
   pending: boolean;
@@ -92,7 +91,7 @@ interface LorebookPanelProps {
   className?: string;
 }
 
-export function LorebookPanel({ campaign, userId, worldStateJson, updatedAt, pending, onRefresh, onEditWorld, className }: LorebookPanelProps) {
+export function LorebookPanel({ campaign, worldStateJson, updatedAt, pending, onRefresh, onEditWorld, className }: LorebookPanelProps) {
   const saveLore = useCampaignStore((s) => s.saveLore);
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
@@ -123,7 +122,7 @@ export function LorebookPanel({ campaign, userId, worldStateJson, updatedAt, pen
     setSaving(true);
     setError(null);
     try {
-      await saveLore(userId, campaign.id, state as Record<string, unknown>);
+      await saveLore(campaign.id, state as Record<string, unknown>);
       setEditing(false);
       toast({ title: "Lorebook saved", description: "The narrator will treat these details as fact." });
     } catch (e) {

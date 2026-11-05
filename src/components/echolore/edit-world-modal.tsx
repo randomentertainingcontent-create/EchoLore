@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useMockUser } from "@/hooks/use-mock-user";
 import { useCampaignStore } from "@/store/campaign-store";
 import type { Campaign } from "@/types/echolore";
 import { WORLD_FIELDS } from "./new-campaign-modal";
@@ -28,7 +27,6 @@ export function EditWorldModal({ campaign, open, onOpenChange }: EditWorldModalP
 }
 
 function EditWorldBody({ campaign, onOpenChange }: { campaign: Campaign; onOpenChange: (open: boolean) => void }) {
-  const { userId } = useMockUser();
   const update = useCampaignStore((s) => s.update);
   const { toast } = useToast();
   const [form, setForm] = useState({ title: campaign.title, worldDescription: campaign.worldDescription, userPersona: campaign.userPersona, aiPersona: campaign.aiPersona });
@@ -37,7 +35,7 @@ function EditWorldBody({ campaign, onOpenChange }: { campaign: Campaign; onOpenC
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!userId || saving) return;
+    if (saving) return;
     const trimmed = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()])) as typeof form;
     if (Object.values(trimmed).some((value) => !value)) { setError("Fields cannot be blank."); return; }
     const patch = Object.fromEntries(Object.entries(trimmed).filter(([key, value]) => campaign[key as keyof typeof form] !== value));
@@ -45,7 +43,7 @@ function EditWorldBody({ campaign, onOpenChange }: { campaign: Campaign; onOpenC
     setSaving(true);
     setError(null);
     try {
-      await update(userId, campaign.id, patch);
+      await update(campaign.id, patch);
       toast({ title: "World updated", description: "The narrator will follow your changes from the next reply." });
       onOpenChange(false);
     } catch (e) {
