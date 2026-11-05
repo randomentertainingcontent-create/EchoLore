@@ -1,7 +1,7 @@
 import { expect } from "@playwright/test";
-import { addKey, createWorld, fakeKey, fillWorld, noOverflow, openDrawerIfMobile, openWorldForm, reply, signIn, signOut, test } from "./fixtures";
+import { addKey, createWorld, fillWorld, noOverflow, openDrawerIfMobile, openWorldForm, reply, signIn, test } from "./fixtures";
 
-test("core flow, streamed reply, navigation, keyboard and logout", async ({ page, mock }, testInfo) => {
+test("guest start, streamed reply, navigation, keyboard and reload", async ({ page, mock }, testInfo) => {
   await signIn(page);
   await createWorld(page, "Lantern Vale");
   expect(mock.campaigns[0]).toMatchObject({ title: "Lantern Vale", worldState: { stateJson: { location: "Lantern gate" } } });
@@ -43,17 +43,12 @@ test("core flow, streamed reply, navigation, keyboard and logout", async ({ page
   await expect(page.getByRole("heading", { name: "Lantern Vale", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Conversation" })).toContainText(reply);
   await noOverflow(page);
-  await signOut(page);
-  await expect(page.getByRole("heading", { name: "Sign in to your worlds" })).toBeVisible();
-  await expect(page.getByText("Lantern Vale", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Conversation" })).toHaveCount(0);
-  const storage = await page.evaluate(() => JSON.stringify({ ...localStorage }));
-  expect(storage).not.toContain(fakeKey);
-  expect(storage).not.toContain(mock.campaigns[0].id);
-  expect(storage).not.toContain("local-test-refresh-token");
-  expect(mock.requests).toContain("POST /auth/v1/logout");
+  expect(mock.requests).toContain("POST /auth/v1/signup");
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Sign in to your worlds" })).toBeVisible();
+  await openDrawerIfMobile(page);
+  await expect(page.getByRole("button", { name: /^Lantern Vale/ })).toBeVisible();
+  await expect(page.getByText(/Playing as a guest/).filter({ visible: true })).toBeVisible();
+  expect(mock.requests.filter((r) => r === "POST /auth/v1/signup")).toHaveLength(1);
 });
 
 test("create, history and chat failures preserve drafts and recover", async ({ page, mock }, testInfo) => {

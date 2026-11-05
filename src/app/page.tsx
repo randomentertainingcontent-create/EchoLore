@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, Brain, KeyRound, Map as MapIcon, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/echolore/sidebar";
 import { ChatWindow } from "@/components/echolore/chat-window";
 import { NewCampaignModal } from "@/components/echolore/new-campaign-modal";
@@ -11,49 +11,36 @@ import type { WorldTemplate } from "@/components/echolore/presets";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import { useCampaignStore } from "@/store/campaign-store";
-import { useMockUser } from "@/hooks/use-mock-user";
-import { AuthPanel } from "@/components/echolore/auth-panel";
+import { ensureSession, useMockUser } from "@/hooks/use-mock-user";
 import { BrandWordmark } from "@/components/echolore/brand";
+import { PixelCampfire } from "@/components/echolore/pixel-art";
 import { useByokStore } from "@/store/byok-store";
 
-const HIGHLIGHTS = [
-  { icon: MapIcon, title: "Any world, any role", text: "Cyberpunk heists, small-town mysteries, slow-burn romance, or a night of cramming with your best friend." },
-  { icon: Brain, title: "A narrator that remembers", text: "Every moment is stored as searchable memory, so old promises and grudges resurface naturally." },
-  { icon: BookOpen, title: "A lorebook that keeps up", text: "Location, inventory, goals and relationships are tracked for you, and you can edit them anytime." },
-  { icon: KeyRound, title: "Your key, your models", text: "Use free or premium OpenRouter models. Your key never touches our database." },
-];
-
 export default function Home() {
-  const { userId, ready, recovery, accountVersion } = useMockUser();
+  const { userId, ready, accountVersion, error, configured } = useMockUser();
   const ownerId = useCampaignStore((s) => s.ownerId);
   const keyOwnerId = useByokStore((s) => s.ownerId);
 
-  if (!ready) return <main className="el-app el-ember-bg flex min-h-dvh items-center justify-center bg-background px-6 text-foreground"><p role="status" className="text-sm text-muted-foreground">Checking your session…</p></main>;
-  if (!userId || recovery) return (
-    <main className="el-app el-ember-bg min-h-dvh bg-background px-5 py-8 text-foreground sm:px-10">
-      <div className="mx-auto max-w-5xl">
-        <BrandWordmark />
-        <div className="grid items-start gap-10 py-10 sm:py-16 md:grid-cols-[1.1fr_1fr] md:gap-16">
-          <div>
-            <h1 className="el-display max-w-md text-4xl sm:text-5xl">Stories that <span className="text-primary">remember</span>.</h1>
-            <p className="mt-5 max-w-prose text-base leading-8 text-muted-foreground">Build a world, pick who you are, and play it out with a narrator that keeps track of where you are, what you carry, who you’ve met and what you promised.</p>
-            <ul className="mt-8 grid gap-5 sm:grid-cols-2">
-              {HIGHLIGHTS.map(({ icon: Icon, title, text }) => (
-                <li key={title} className="flex gap-3">
-                  <Icon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                  <span><span className="block text-sm font-medium">{title}</span><span className="mt-1 block text-sm leading-relaxed text-muted-foreground">{text}</span></span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="rounded-md border border-border bg-card p-6 sm:p-8">
-            <AuthPanel key={`${accountVersion}:${recovery}`} />
-          </div>
+  if (!ready || (userId && (ownerId !== userId || keyOwnerId !== userId))) {
+    return (
+      <main className="el-app el-ember-bg flex min-h-dvh flex-col items-center justify-center gap-5 bg-background px-6 text-foreground">
+        <PixelCampfire className="h-16 w-16" />
+        <p role="status" className="text-sm text-muted-foreground">Lighting the fire…</p>
+      </main>
+    );
+  }
+  if (!userId) {
+    return (
+      <main className="el-app el-ember-bg flex min-h-dvh items-center justify-center bg-background px-6 text-foreground">
+        <div className="max-w-md">
+          <BrandWordmark />
+          <h1 className="el-display mt-8 text-2xl">The fire won’t light</h1>
+          <p role="alert" className="mt-3 text-sm leading-7 text-muted-foreground">{error ?? "Couldn’t start a session."}</p>
+          {configured && <Button className="mt-5 h-11" onClick={() => void ensureSession()}>Retry</Button>}
         </div>
-      </div>
-    </main>
-  );
-  if (ownerId !== userId || keyOwnerId !== userId) return <main className="el-app flex min-h-dvh items-center justify-center bg-background px-6 text-foreground"><p role="status">Preparing your account…</p></main>;
+      </main>
+    );
+  }
   return <PrivateHome key={`${userId}:${accountVersion}`} userId={userId} />;
 }
 

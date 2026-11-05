@@ -7,10 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
-import { Plus, MoreHorizontal, Trash2, Settings, Flame, Loader2, Search, Pencil, Copy, LogOut, KeyRound } from "lucide-react";
+import { Plus, MoreHorizontal, Trash2, Settings, Flame, Loader2, Search, Pencil, Copy, KeyRound } from "lucide-react";
 import { BrandWordmark } from "./brand";
 import { useCampaignStore } from "@/store/campaign-store";
-import { signOutAccount, useMockUser } from "@/hooks/use-mock-user";
+import { useMockUser } from "@/hooks/use-mock-user";
 import { useMounted } from "@/hooks/use-mounted";
 import { useByokStore } from "@/store/byok-store";
 import { useToast } from "@/hooks/use-toast";
@@ -27,7 +27,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, onSelect }: SidebarProps) {
-  const { userId, ready, email, error: sessionError } = useMockUser();
+  const { userId, ready, email, isGuest, error: sessionError } = useMockUser();
   const { campaigns, activeId, remove, setActive, duplicate, loading, error } = useCampaignStore();
   const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
   const hydrated = useMounted();
@@ -155,11 +155,9 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
           <span className="min-w-0 flex-1 truncate text-left">{hydrated && hasKey ? "Settings" : "Settings · add your key"}</span>
           <span className={cn("h-2 w-2 rounded-full", hydrated && hasKey ? "bg-emerald-400" : "bg-primary el-pulse-dot")} aria-hidden="true" />
         </Button>
-        <div className="flex min-w-0 items-center gap-2 rounded-md px-3">
-          <span aria-hidden="true" className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold uppercase">{(email ?? "?").charAt(0)}</span>
-          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={email ?? userId ?? undefined}>{email ?? "Signed in"}</p>
-          <Button variant="ghost" size="sm" className="h-9 shrink-0 gap-1.5 px-2 text-xs" disabled={!ready} onClick={() => void signOutAccount()}><LogOut className="h-3.5 w-3.5" /> Sign out</Button>
-        </div>
+        <p className="px-3 text-[11px] leading-relaxed text-muted-foreground" title={email ?? undefined}>
+          {isGuest ? "Playing as a guest. Your worlds are saved to this browser, so clearing its data removes access." : `Signed in as ${email}`}
+        </p>
         {sessionError && <p role="alert" className="break-words px-3 text-xs text-destructive">{sessionError}</p>}
       </div>
       <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open && !pending) setDeleting(null); }}>

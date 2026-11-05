@@ -6,9 +6,6 @@ test.skip(!process.env.SCREENS, "screenshots only on demand");
 
 test("capture screens", async ({ page }, testInfo) => {
   const shot = (name: string) => page.screenshot({ path: testInfo.outputPath(`${testInfo.project.name}-${name}.png`), animations: "disabled" });
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Sign in to your worlds" })).toBeVisible();
-  await shot("1-landing");
   await signIn(page);
   await shot("2-welcome");
   await page.getByRole("button", { name: "Create your first world" }).click();

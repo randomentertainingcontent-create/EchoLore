@@ -8,8 +8,9 @@ const user = {
   id: userId,
   aud: "authenticated",
   role: "authenticated",
-  email: "reader@example.test",
-  app_metadata: { provider: "email", providers: ["email"] },
+  email: "",
+  is_anonymous: true,
+  app_metadata: { provider: "anonymous", providers: ["anonymous"] },
   user_metadata: {},
   created_at: "2026-01-01T00:00:00.000Z",
 };
@@ -41,8 +42,7 @@ export const test = base.extend<{ mock: MockState }>({
           return;
         }
         state.requests.push(`${method} ${url.pathname}`);
-        if (url.pathname === "/auth/v1/token") {
-          expect(request.postDataJSON()).toMatchObject({ email: user.email, password: "local-test-password" });
+        if (url.pathname === "/auth/v1/signup" || url.pathname === "/auth/v1/token") {
           await json({ access_token: accessToken, refresh_token: "local-test-refresh-token", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, user });
           return;
         }
@@ -179,9 +179,6 @@ export const test = base.extend<{ mock: MockState }>({
 
 export async function signIn(page: Page) {
   await page.goto("/");
-  await page.getByLabel("Email", { exact: true }).fill(user.email);
-  await page.getByLabel("Password", { exact: true }).fill("local-test-password");
-  await page.getByLabel("Password", { exact: true }).press("Enter");
   await expect(page.getByRole("button", { name: "Create your first world" })).toBeVisible();
 }
 
@@ -194,10 +191,6 @@ export async function openDrawerIfMobile(page: Page) {
   }
 }
 
-export async function signOut(page: Page) {
-  await openDrawerIfMobile(page);
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
-}
 
 export async function openWorldForm(page: Page) {
   const firstWorld = page.getByRole("button", { name: "Create your first world" });

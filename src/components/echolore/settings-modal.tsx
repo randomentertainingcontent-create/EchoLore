@@ -107,7 +107,7 @@ function SettingsFields({ onDone, initialTab }: { onDone: () => void; initialTab
             <p id="key-hint" className="text-xs leading-relaxed text-muted-foreground">{config.openrouterKey.trim() ? "Key saved on this browser." : "A key is required to chat. Creating a world does not require one. Free models cost nothing."}</p>
           </div>
           <div className="rounded-lg border border-border p-3 text-xs leading-6 text-muted-foreground">
-            <p>Your key stays in this browser’s storage and is sent through EchoLore’s server to OpenRouter only when used. It’s never saved on the server, and it’s removed when you sign out.</p>
+            <p>Your key stays in this browser’s storage and is sent through EchoLore’s server to OpenRouter only when used. It’s never saved on the server.</p>
             <p className="mt-1">OpenRouter charges apply to paid models, including small embedding costs for story memory.</p>
           </div>
           {confirmClear ? (

@@ -49,7 +49,7 @@ The interface is built around a night-camp theme: a hand-drawn pixel-art campfir
 | Story model    | `openai/gpt-oss-120b:free` by default (any OpenRouter model works) |
 | Lorebook model | `openai/gpt-oss-20b:free` by default |
 | Embeddings     | `openai/text-embedding-3-small` via OpenRouter (1536 dimensions, fixed) |
-| Database/auth  | Supabase: PostgreSQL + pgvector + Auth + Row Level Security |
+| Database/auth  | Supabase: PostgreSQL + pgvector + anonymous Auth + Row Level Security |
 
 One OpenRouter key powers the story, the lorebook keeper and memory embeddings.
 
@@ -65,7 +65,7 @@ One OpenRouter key powers the story, the lorebook keeper and memory embeddings.
 ### 1. Set up Supabase
 1. Create a project and enable the `vector` extension (Database → Extensions).
 2. In the SQL Editor run [`supabase/schema.sql`](./supabase/schema.sql), then [`supabase/hardening.sql`](./supabase/hardening.sql). The app needs the transactional functions from `hardening.sql`; `schema.sql` alone is not enough. For an existing EchoLore database, back it up and apply `hardening.sql`.
-3. Enable **Email** authentication. Set the Site URL and allow `/` and `/?recovery=1` as redirect URLs (account confirmation and password reset).
+3. Turn on **Allow anonymous sign-ins** (Authentication → Sign In / Providers). There is no sign-up form: each browser gets a private guest account automatically, and row-level security keeps its worlds to itself.
 4. Copy the project URL and the **anon** public key. Never use the service-role key: every request runs as the signed-in user with RLS enforced.
 
 No extra migration is needed for this release: regenerate, rewind, message edits, world edits and lorebook edits all use the existing tables and their row-level security policies.
@@ -82,9 +82,11 @@ npm run dev            # http://localhost:3000
 Fill `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local` (PowerShell: `Copy-Item .env.example .env.local`). Restart the dev server after changing environment variables; production builds need a rebuild.
 
 ### 3. Play
-Create an account, pick a template (or start from scratch), add your OpenRouter key from the banner or **Settings**, and press **Begin the story**.
+Open the app (no account needed), pick a template or start from scratch, add your OpenRouter key from the banner or **Settings**, and press **Begin the story**.
 
-If world creation reports incomplete database setup, check that `hardening.sql` finished. If permissions are denied, check authenticated grants and RLS policies. Don't disable auth or RLS to work around errors.
+Guest worlds belong to that browser. Clearing its site data, or switching browsers or devices, means starting fresh.
+
+If the app says "The fire won’t light", anonymous sign-ins are off or the Supabase project is paused. If world creation reports incomplete database setup, check that `hardening.sql` finished. If permissions are denied, check authenticated grants and RLS policies. Don't disable auth or RLS to work around errors.
 
 ---
 
@@ -119,10 +121,11 @@ All routes require a Supabase bearer token and validate input with Zod.
 ---
 
 ## Security model
-- The OpenRouter key lives in the browser's `localStorage`, is sent per request in the `x-openrouter-key` header, used for that call and discarded. It's never stored server-side or logged, and it's cleared on sign-out.
+- Every browser gets its own Supabase guest (anonymous) user, so nobody needs to sign up and nobody can read another browser's worlds.
+- The OpenRouter key lives in the browser's `localStorage`, is sent per request in the `x-openrouter-key` header, used for that call and discarded. It's never stored server-side or logged.
 - The server talks to Supabase with the user's own access token and the anon key, so row-level security scopes every query to the owner.
 - Request bodies are size-limited and parsed strictly; lorebook JSON is bounded (6 levels deep, 100 keys per object, 4,000 characters per value, 16 KB total).
-- Composer drafts are kept in memory only and cleared on sign-out.
+- Composer drafts are kept in memory only.
 
 ---
 
@@ -168,7 +171,7 @@ npm test                 # unit tests, no network
 npm run test:e2e         # Playwright, desktop + mobile, all services mocked
 ```
 
-The E2E suite covers sign-in, world creation, streaming, failure recovery, templates, Say mode, regenerate, rewind, message edits, lorebook editing, world edits, the model picker, key checks and sign-out cleanup. Playwright defaults to Microsoft Edge; set `PLAYWRIGHT_CHANNEL=chrome` or point `PLAYWRIGHT_EXECUTABLE_PATH` at a Chromium binary. `SCREENS=1 npm run test:e2e -- zz-screens` captures screenshots of every major screen for visual review.
+The E2E suite covers the guest session, world creation, streaming, failure recovery, templates, Say mode, regenerate, rewind, message edits, lorebook editing, world edits, the model picker, key checks and reload persistence. Playwright defaults to Microsoft Edge; set `PLAYWRIGHT_CHANNEL=chrome` or point `PLAYWRIGHT_EXECUTABLE_PATH` at a Chromium binary. `SCREENS=1 npm run test:e2e -- zz-screens` captures screenshots of every major screen for visual review.
 
 `scripts/` also has Python stress and edge-case scripts for a live deployment.
 
