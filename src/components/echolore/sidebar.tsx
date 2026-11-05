@@ -7,10 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
-import { Plus, MoreHorizontal, Trash2, Settings, Flame, Loader2, Search, Pencil, Copy, LogOut, KeyRound } from "lucide-react";
+import { Plus, MoreHorizontal, Trash2, Settings, Flame, Loader2, Search, Pencil, Copy, KeyRound } from "lucide-react";
 import { BrandWordmark } from "./brand";
 import { useCampaignStore } from "@/store/campaign-store";
-import { signOutAccount, useMockUser } from "@/hooks/use-mock-user";
 import { useMounted } from "@/hooks/use-mounted";
 import { useByokStore } from "@/store/byok-store";
 import { useToast } from "@/hooks/use-toast";
@@ -27,7 +26,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, onSelect }: SidebarProps) {
-  const { userId, ready, email, error: sessionError } = useMockUser();
   const { campaigns, activeId, remove, setActive, duplicate, loading, error } = useCampaignStore();
   const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
   const hydrated = useMounted();
@@ -44,11 +42,11 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
   }, [campaigns, query]);
 
   async function deleteWorld() {
-    if (!userId || !deleting || pending) return;
+    if (!deleting || pending) return;
     setPending(true);
     setDeleteError(null);
     try {
-      await remove(userId, deleting.id);
+      await remove(deleting.id);
       setDeleting(null);
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Could not delete this world. Please try again.");
@@ -58,9 +56,8 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
   }
 
   async function copyWorld(campaign: Campaign) {
-    if (!userId) return;
     try {
-      const copy = await duplicate(userId, campaign.id);
+      const copy = await duplicate(campaign.id);
       toast({ title: "World duplicated", description: `“${copy.title}” starts fresh with the same setup and lorebook.` });
       onSelect?.();
     } catch (e) {
@@ -74,7 +71,7 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
         <BrandWordmark />
       </div>
       <div className="grid gap-2 px-3 pt-3">
-        <Button onClick={onNewCampaign} className="h-11 w-full justify-start gap-2" disabled={!ready || !userId}>
+        <Button onClick={onNewCampaign} className="h-11 w-full justify-start gap-2" >
           <Plus className="h-4 w-4" /> New World
         </Button>
         {campaigns.length > 3 && (
@@ -90,7 +87,7 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
         <div className="mx-3 mb-3 rounded-md border border-destructive/40 p-3 text-sm">
           <p role="alert">Could not refresh your worlds.</p>
           <p className="mt-1 break-words text-xs text-muted-foreground">{error}</p>
-          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry} disabled={loading || !ready || !userId}>Retry worlds</Button>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onRetry} disabled={loading}>Retry worlds</Button>
         </div>
       )}
       <ScrollArea className="min-h-0 flex-1 px-2 el-scroll">
@@ -155,12 +152,7 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
           <span className="min-w-0 flex-1 truncate text-left">{hydrated && hasKey ? "Settings" : "Settings · add your key"}</span>
           <span className={cn("h-2 w-2 rounded-full", hydrated && hasKey ? "bg-emerald-400" : "bg-primary el-pulse-dot")} aria-hidden="true" />
         </Button>
-        <div className="flex min-w-0 items-center gap-2 rounded-md px-3">
-          <span aria-hidden="true" className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold uppercase">{(email ?? "?").charAt(0)}</span>
-          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={email ?? userId ?? undefined}>{email ?? "Signed in"}</p>
-          <Button variant="ghost" size="sm" className="h-9 shrink-0 gap-1.5 px-2 text-xs" disabled={!ready} onClick={() => void signOutAccount()}><LogOut className="h-3.5 w-3.5" /> Sign out</Button>
-        </div>
-        {sessionError && <p role="alert" className="break-words px-3 text-xs text-destructive">{sessionError}</p>}
+        <p className="px-3 text-[11px] leading-relaxed text-muted-foreground">Your worlds are saved in this browser. Download a backup from Settings → Data.</p>
       </div>
       <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => { if (!open && !pending) setDeleting(null); }}>
         <AlertDialogContent className="el-dialog max-h-[calc(100dvh-2rem)] overflow-y-auto bg-card">
@@ -171,7 +163,7 @@ export function Sidebar({ onNewCampaign, onOpenSettings, onRetry, onEditWorld, o
           {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>Keep world</AlertDialogCancel>
-            <AlertDialogAction disabled={pending || !userId} onClick={(e) => { e.preventDefault(); void deleteWorld(); }} className="bg-destructive text-white hover:bg-destructive/90">
+            <AlertDialogAction disabled={pending} onClick={(e) => { e.preventDefault(); void deleteWorld(); }} className="bg-destructive text-white hover:bg-destructive/90">
               {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{pending ? "Deleting…" : "Delete world"}
             </AlertDialogAction>
           </AlertDialogFooter>

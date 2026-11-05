@@ -30,8 +30,6 @@ export default defineConfig({
     timeout: 120000,
     reuseExistingServer: false,
     env: {
-      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: "local-test-anon-key",
       NEXT_FONT_GOOGLE_MOCKED_RESPONSES: resolve("tests/e2e/fonts.json"),
       NEXT_TELEMETRY_DISABLED: "1",
     },

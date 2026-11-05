@@ -7,17 +7,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, ExternalLink, Eye, EyeOff, Loader2, Settings2, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, DownloadCloud, ExternalLink, Eye, EyeOff, Loader2, Settings2, ShieldCheck, Trash2, UploadCloud, XCircle } from "lucide-react";
 import { useByokStore, DEFAULT_BYOK } from "@/store/byok-store";
 import { usePrefsStore, DEFAULT_PREFS, type StoryFont, type TextSize } from "@/store/prefs-store";
 import { useToast } from "@/hooks/use-toast";
 import { useMounted } from "@/hooks/use-mounted";
-import { buildAuthHeaders, EMBED_MODEL, HDR_OPENROUTER_KEY } from "@/lib/byok/headers";
+import { EMBED_MODEL, HDR_OPENROUTER_KEY } from "@/lib/byok/headers";
+import { localDb, parseBackup } from "@/lib/local-db";
+import { useCampaignStore } from "@/store/campaign-store";
 import { cn } from "@/lib/utils";
 import type { ResponseLength } from "@/types/echolore";
 import { ModelPicker } from "./model-picker";
 
-export type SettingsTab = "connection" | "models" | "story";
+export type SettingsTab = "connection" | "models" | "story" | "data";
 
 interface SettingsModalProps {
   open: boolean;
@@ -67,7 +69,7 @@ function SettingsFields({ onDone, initialTab }: { onDone: () => void; initialTab
   async function testKey() {
     setKeyStatus({ state: "checking" });
     try {
-      const res = await fetch("/api/key-check", { method: "POST", headers: { ...await buildAuthHeaders(), [HDR_OPENROUTER_KEY]: config.openrouterKey } });
+      const res = await fetch("/api/key-check", { method: "POST", headers: { [HDR_OPENROUTER_KEY]: config.openrouterKey } });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Could not check the key.");
       if (!body.ok) { setKeyStatus({ state: "bad", detail: body.error }); return; }
@@ -84,7 +86,8 @@ function SettingsFields({ onDone, initialTab }: { onDone: () => void; initialTab
         <TabsList className="w-full">
           <TabsTrigger value="connection" className="flex-1">Connection</TabsTrigger>
           <TabsTrigger value="models" className="flex-1">Models</TabsTrigger>
-          <TabsTrigger value="story" className="flex-1">Storytelling</TabsTrigger>
+          <TabsTrigger value="story" className="flex-1">Story</TabsTrigger>
+          <TabsTrigger value="data" className="flex-1">Data</TabsTrigger>
         </TabsList>
 
         <TabsContent value="connection" className="grid gap-5">
@@ -107,7 +110,7 @@ function SettingsFields({ onDone, initialTab }: { onDone: () => void; initialTab
             <p id="key-hint" className="text-xs leading-relaxed text-muted-foreground">{config.openrouterKey.trim() ? "Key saved on this browser." : "A key is required to chat. Creating a world does not require one. Free models cost nothing."}</p>
           </div>
           <div className="rounded-lg border border-border p-3 text-xs leading-6 text-muted-foreground">
-            <p>Your key stays in this browser’s storage and is sent through EchoLore’s server to OpenRouter only when used. It’s never saved on the server, and it’s removed when you sign out.</p>
+            <p>Your key stays in this browser and passes through EchoLore’s server to OpenRouter only for each request. Nothing is saved on the server: no key, no stories.</p>
             <p className="mt-1">OpenRouter charges apply to paid models, including small embedding costs for story memory.</p>
           </div>
           {confirmClear ? (
@@ -152,10 +155,107 @@ function SettingsFields({ onDone, initialTab }: { onDone: () => void; initialTab
           </div>
           <Button variant="link" className="h-auto justify-self-start px-0 py-1 text-sm" onClick={() => prefs.reset()} disabled={prefs.responseLength === DEFAULT_PREFS.responseLength && prefs.creativity === DEFAULT_PREFS.creativity && prefs.textSize === DEFAULT_PREFS.textSize && prefs.storyFont === DEFAULT_PREFS.storyFont}>Reset storytelling settings</Button>
         </TabsContent>
+
+        <TabsContent value="data">
+          <DataPanel />
+        </TabsContent>
       </Tabs>
       <DialogFooter>
         <Button onClick={onDone}>Done</Button>
       </DialogFooter>
     </>
+  );
+}
+
+function DataPanel() {
+  const fetchAll = useCampaignStore((s) => s.fetchAll);
+  const setActive = useCampaignStore((s) => s.setActive);
+  const { toast } = useToast();
+  const [busy, setBusy] = useState<"export" | "import" | "erase" | null>(null);
+  const [confirmErase, setConfirmErase] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function exportAll() {
+    setBusy("export");
+    setError(null);
+    try {
+      const backup = await localDb.exportAll();
+      const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `echolore-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast({ title: "Backup downloaded", description: `${backup.campaigns.length} world${backup.campaigns.length === 1 ? "" : "s"} and ${backup.messages.length} messages.` });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create the backup.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function importFile(file: File) {
+    setBusy("import");
+    setError(null);
+    try {
+      if (file.size > 200 * 1024 * 1024) throw new Error("That file is too large to be an EchoLore backup.");
+      const backup = parseBackup(JSON.parse(await file.text()));
+      const counts = await localDb.importAll(backup);
+      await fetchAll();
+      toast({ title: "Backup restored", description: `${counts.campaigns} world${counts.campaigns === 1 ? "" : "s"} and ${counts.messages} messages added.` });
+    } catch (e) {
+      setError(e instanceof SyntaxError ? "That file isn’t valid JSON." : e instanceof Error ? e.message : "Could not restore the backup.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function eraseAll() {
+    setBusy("erase");
+    try {
+      setActive(null);
+      await localDb.clearAll();
+      await fetchAll();
+      setConfirmErase(false);
+      toast({ title: "Everything erased", description: "All worlds and stories were removed from this browser." });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not erase your data.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="grid gap-5">
+      <p className="text-sm leading-relaxed text-muted-foreground">Your worlds, stories and lorebooks live only in this browser. Clearing site data or switching devices loses them, so download a backup now and then.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" onClick={() => void exportAll()} disabled={busy !== null} className="gap-2">
+          {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <DownloadCloud className="h-4 w-4" />} Download backup
+        </Button>
+        <Button type="button" variant="outline" asChild disabled={busy !== null} className="gap-2">
+          <label className="cursor-pointer">
+            {busy === "import" ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />} Restore backup
+            <input type="file" accept="application/json,.json" className="sr-only" aria-label="Restore backup file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importFile(file); }} />
+          </label>
+        </Button>
+      </div>
+      <p className="-mt-2 text-xs text-muted-foreground">Restoring adds the backup’s worlds to this browser; worlds you already have are kept.</p>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      <div className="border-t border-border pt-4">
+        {confirmErase ? (
+          <div className="rounded-md border border-destructive/40 p-3 text-sm">
+            <p>Erase every world, story and lorebook in this browser? This can’t be undone.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="destructive" size="sm" onClick={() => void eraseAll()} disabled={busy !== null}>{busy === "erase" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Erase everything</Button>
+              <Button variant="outline" size="sm" onClick={() => setConfirmErase(false)} disabled={busy !== null}>Keep my worlds</Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="ghost" size="sm" onClick={() => setConfirmErase(true)} className="gap-1.5 text-muted-foreground"><Trash2 className="h-3.5 w-3.5" /> Erase all data</Button>
+        )}
+      </div>
+    </div>
   );
 }

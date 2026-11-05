@@ -1,10 +1,12 @@
+import { readFile } from "node:fs/promises";
 import { expect } from "@playwright/test";
-import { addKey, createWorld, fakeKey, fillWorld, noOverflow, openDrawerIfMobile, openWorldForm, reply, signIn, signOut, test } from "./fixtures";
+import { addKey, createWorld, noOverflow, openDrawerIfMobile, reply, start, test, waitForReply } from "./fixtures";
 
-test("core flow, streamed reply, navigation, keyboard and logout", async ({ page, mock }, testInfo) => {
-  await signIn(page);
+const closeSheet = async (page: import("@playwright/test").Page) => page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+
+test("no sign-up: create a world, stream a reply, switch worlds and survive a reload", async ({ page, mock }, testInfo) => {
+  await start(page);
   await createWorld(page, "Lantern Vale");
-  expect(mock.campaigns[0]).toMatchObject({ title: "Lantern Vale", worldState: { stateJson: { location: "Lantern gate" } } });
   const composer = page.getByLabel("Your next move", { exact: true });
   await expect(composer).toBeVisible();
   await expect(page.getByRole("button", { name: "Begin the story" })).toBeDisabled();
@@ -19,63 +21,46 @@ test("core flow, streamed reply, navigation, keyboard and logout", async ({ page
   await composer.press("Enter");
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   await expect(composer).toHaveValue("");
-  await expect(page.getByRole("region", { name: "Conversation" })).toContainText("The lantern flickers.");
-  await expect(page.getByRole("region", { name: "Conversation" })).toContainText(reply);
+  const conversation = page.getByRole("region", { name: "Conversation" });
+  await expect(conversation).toContainText(reply);
+  await waitForReply(page);
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
-  expect(mock.chatBodies).toEqual([{ campaignId: mock.campaigns[0].id, message: "I follow the lantern.\nWhat lies ahead?" }]);
+  expect(mock.chatBodies).toHaveLength(1);
+  expect(mock.chatBodies[0]).toMatchObject({
+    world: { worldDescription: "A quiet forest with silver paths and lanterns.", userPersona: "A curious cartographer." },
+    worldState: { location: "Lantern gate" },
+    history: [],
+    message: "I follow the lantern.\nWhat lies ahead?",
+    options: { responseLength: "medium" },
+  });
   await page.getByRole("button", { name: "Lorebook", exact: true }).click();
   await expect(page.getByRole("region", { name: "World lorebook" })).toContainText("Lantern gate");
   await noOverflow(page);
   await page.screenshot({ path: testInfo.outputPath(`${testInfo.project.name}-chat.png`), fullPage: true, animations: "disabled" });
-  if (testInfo.project.name === "mobile") await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+  if (testInfo.project.name === "mobile") await closeSheet(page);
   await createWorld(page, "Silver Harbor");
   await expect(page.getByRole("heading", { name: "Silver Harbor", exact: true })).toBeVisible();
-  if (testInfo.project.name === "mobile") {
-    const drawer = page.getByRole("button", { name: "Open world navigation" });
-    await drawer.focus();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("dialog", { name: "Your worlds", exact: true })).toBeVisible();
-    await noOverflow(page);
-    await page.screenshot({ path: testInfo.outputPath("mobile-drawer.png"), fullPage: true, animations: "disabled" });
-  }
+  await openDrawerIfMobile(page);
   await page.getByRole("button", { name: /^Lantern Vale/ }).click();
   await expect(page.getByRole("dialog", { name: "Your worlds", exact: true })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Lantern Vale", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Conversation" })).toContainText(reply);
+  await expect(conversation).toContainText(reply);
   await noOverflow(page);
-  await signOut(page);
-  await expect(page.getByRole("heading", { name: "Sign in to your worlds" })).toBeVisible();
-  await expect(page.getByText("Lantern Vale", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Conversation" })).toHaveCount(0);
-  const storage = await page.evaluate(() => JSON.stringify({ ...localStorage }));
-  expect(storage).not.toContain(fakeKey);
-  expect(storage).not.toContain(mock.campaigns[0].id);
-  expect(storage).not.toContain("local-test-refresh-token");
-  expect(mock.requests).toContain("POST /auth/v1/logout");
+
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Sign in to your worlds" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lantern Vale", exact: true })).toBeVisible();
+  await expect(conversation).toContainText("I follow the lantern.");
+  await expect(conversation).toContainText(reply);
+  await openDrawerIfMobile(page);
+  await expect(page.getByRole("button", { name: /^Silver Harbor/ })).toBeVisible();
+  expect(mock.requests.some((r) => r.includes("auth"))).toBe(false);
 });
 
-test("create, history and chat failures preserve drafts and recover", async ({ page, mock }, testInfo) => {
-  await signIn(page);
-  mock.failCreate = true;
-  await openWorldForm(page);
-  await fillWorld(page, "Resilient Vale");
-  await noOverflow(page);
-  await page.getByRole("button", { name: "Create world", exact: true }).click();
-  await expect(page.getByRole("alert").filter({ hasText: /Your entries are kept|Your draft is kept/ })).toContainText("Your entries are kept");
-  await expect(page.getByLabel("World title", { exact: true })).toHaveValue("Resilient Vale");
-  await expect(page.getByLabel("Your persona", { exact: true })).toHaveValue("A curious cartographer.");
-  mock.failCreate = false;
-  mock.failHistory = true;
-  await page.getByRole("button", { name: "Create world", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Forge a new world" })).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Could not load the story" })).toBeVisible();
-  mock.failHistory = false;
-  await page.getByRole("button", { name: "Retry history", exact: true }).click();
-  const composer = page.getByLabel("Your next move", { exact: true });
-  await expect(composer).toBeVisible();
+test("a failed reply keeps the draft, saves nothing, and recovers", async ({ page, mock }, testInfo) => {
+  await start(page);
+  await createWorld(page, "Resilient Vale");
   await addKey(page);
+  const composer = page.getByLabel("Your next move", { exact: true });
   mock.failChat = true;
   await composer.fill("Keep this draft after failure.");
   await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -87,76 +72,82 @@ test("create, history and chat failures preserve drafts and recover", async ({ p
   mock.failChat = false;
   await composer.press("Enter");
   await expect(page.getByRole("region", { name: "Conversation" })).toContainText(reply);
+  await waitForReply(page);
   await expect(composer).toHaveValue("");
   await expect(page.getByRole("alert").filter({ hasText: /Your draft is kept/ })).toHaveCount(0);
   expect(mock.chatBodies).toHaveLength(2);
+  expect(mock.chatBodies[1].history).toEqual([]);
 });
 
-test("templates, say mode, regenerate, rewind, edits and lorebook editing", async ({ page, mock }, testInfo) => {
-  await signIn(page);
+test("templates, say mode, memory, regenerate, rewind, edits, lorebook keeper and editing", async ({ page, mock }, testInfo) => {
+  await start(page);
   await page.getByRole("button", { name: /Cozy Mystery/ }).click();
   await expect(page.getByLabel("World title", { exact: true })).toHaveValue("Pinewood Hollow");
   await page.getByRole("button", { name: "Create world", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Forge a new world" })).toBeHidden();
-  expect(mock.campaigns[0]).toMatchObject({ title: "Pinewood Hollow", worldState: { stateJson: { day: 1 } } });
   await addKey(page);
   const conversation = page.getByRole("region", { name: "Conversation" });
+  const composer = page.getByLabel("Your next move", { exact: true });
 
   await page.getByRole("button", { name: "Begin the story" }).click();
   await expect(conversation).toContainText(reply);
+  await waitForReply(page);
   expect(mock.chatBodies.at(-1)!.message).toMatch(/^\[Direction: Set the opening scene/);
+  expect(mock.chatBodies.at(-1)!.worldState).toMatchObject({ day: 1, location: "Pinewood Hollow — Main Street Books" });
   await expect(conversation).toContainText("Direction");
-  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
 
-  const composer = page.getByLabel("Your next move", { exact: true });
   await page.getByRole("radio", { name: "Say" }).click();
   await composer.fill("Morning, Sheriff.");
   await composer.press("Enter");
   await expect(conversation).toContainText("\"Morning, Sheriff.\"");
-  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+  await waitForReply(page);
   expect(mock.chatBodies.at(-1)!.message).toBe("\"Morning, Sheriff.\"");
+  expect(mock.chatBodies.at(-1)!.history.map((m) => m.role)).toEqual(["user", "assistant"]);
+  await expect.poll(() => mock.loreCalls).toBe(1);
 
   const regenerate = page.getByRole("button", { name: "Regenerate reply" });
   await expect(regenerate).toBeEnabled();
   await regenerate.click();
-  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
   await expect(conversation).toContainText(reply);
+  await waitForReply(page);
   expect(mock.chatBodies.at(-1)!.message).toBe("\"Morning, Sheriff.\"");
-  expect(mock.requests.filter((r) => r.startsWith("DELETE /api/messages/"))).toHaveLength(1);
-  expect(mock.messages[mock.campaigns[0].id]).toHaveLength(4);
+  expect(mock.chatBodies.at(-1)!.history).toHaveLength(2);
 
   await page.getByRole("button", { name: "Edit message" }).last().click();
   await page.getByLabel("Edited message text", { exact: true }).fill("The sheriff tips his hat and says nothing.");
   await page.getByRole("button", { name: "Save edit" }).click();
   await expect(conversation).toContainText("The sheriff tips his hat and says nothing.");
-  expect(mock.messages[mock.campaigns[0].id].at(-1)!.content).toBe("The sheriff tips his hat and says nothing.");
+
+  await page.getByRole("radio", { name: "Do" }).click();
+  await composer.fill("I ask the sheriff about the lighthouse keeper.");
+  await composer.press("Enter");
+  await waitForReply(page);
+  expect(mock.chatBodies.at(-1)!.history.map((m) => m.content)).toContain("The sheriff tips his hat and says nothing.");
 
   await page.getByRole("button", { name: "Rewind to here and rewrite" }).last().click();
   await page.getByRole("button", { name: "Rewind", exact: true }).click();
-  await expect(composer).toHaveValue("Morning, Sheriff.");
-  await expect(page.getByRole("radio", { name: "Say" })).toHaveAttribute("aria-checked", "true");
-  expect(mock.messages[mock.campaigns[0].id]).toHaveLength(2);
-  await expect(conversation).not.toContainText("tips his hat");
+  await expect(composer).toHaveValue("I ask the sheriff about the lighthouse keeper.");
+  await expect(page.getByRole("radio", { name: "Do" })).toHaveAttribute("aria-checked", "true");
+  await expect(conversation).not.toContainText("I ask the sheriff about the lighthouse keeper.");
+  await expect(conversation).toContainText("tips his hat");
 
   await page.getByRole("button", { name: "Lorebook", exact: true }).click();
   const lore = page.getByRole("region", { name: "World lorebook" });
-  await expect(lore).toContainText("Main Street Books");
+  await expect(lore).toContainText("Keeper noted");
   await lore.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByLabel("Lorebook JSON").fill('{"location":"The lighthouse","clues":["wet footprints"]}');
   await lore.getByRole("button", { name: "Save", exact: true }).click();
   await expect(lore).toContainText("The lighthouse");
   await expect(lore).toContainText("wet footprints");
-  expect(mock.campaigns[0].worldState.stateJson).toEqual({ location: "The lighthouse", clues: ["wet footprints"] });
   await noOverflow(page);
   await page.screenshot({ path: testInfo.outputPath(`${testInfo.project.name}-lorebook.png`), fullPage: true, animations: "disabled" });
-  if (testInfo.project.name === "mobile") await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+  if (testInfo.project.name === "mobile") await closeSheet(page);
 
   await page.getByRole("button", { name: "Story options" }).click();
   await page.getByRole("menuitem", { name: "Edit world" }).click();
   await page.getByLabel("World title", { exact: true }).fill("Pinewood Hollow Redux");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("heading", { name: "Pinewood Hollow Redux", exact: true })).toBeVisible();
-  expect(mock.campaigns[0].title).toBe("Pinewood Hollow Redux");
 
   await page.getByRole("button", { name: "Story options" }).click();
   await page.getByRole("menuitem", { name: "Change model" }).click();
@@ -167,6 +158,39 @@ test("templates, say mode, regenerate, rewind, edits and lorebook editing", asyn
   await page.getByRole("button", { name: "Test key" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Key works" })).toBeVisible();
   await page.getByRole("button", { name: "Done", exact: true }).click();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Pinewood Hollow Redux", exact: true })).toBeVisible();
+  await expect(conversation).toContainText("tips his hat");
+  await expect(conversation).not.toContainText("I ask the sheriff about the lighthouse keeper.");
+  await page.getByRole("button", { name: "Lorebook", exact: true }).click();
+  await expect(page.getByRole("region", { name: "World lorebook" })).toContainText("wet footprints");
+});
+
+test("backup, erase and restore all worlds", async ({ page }) => {
+  await start(page);
+  await createWorld(page, "Backup Vale");
+  await addKey(page);
+  await page.getByRole("button", { name: "Story options" }).click();
+  await page.getByRole("menuitem", { name: "Storytelling settings" }).click();
+  await page.getByRole("tab", { name: "Data" }).click();
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download backup" }).click();
+  const file = await (await downloading).path();
+  const backup = JSON.parse(await readFile(file, "utf8"));
+  expect(backup).toMatchObject({ app: "echolore", campaigns: [{ title: "Backup Vale", worldState: { location: "Lantern gate" } }] });
+
+  await page.getByRole("button", { name: "Erase all data" }).click();
+  await page.getByRole("button", { name: "Erase everything" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Create your first world" })).toBeVisible();
+
   await openDrawerIfMobile(page);
-  await expect(page.getByRole("button", { name: /^Pinewood Hollow Redux/ })).toBeVisible();
+  await page.getByRole("button", { name: /^Settings/ }).filter({ visible: true }).click();
+  await page.getByRole("tab", { name: "Data" }).click();
+  await page.getByLabel("Restore backup file").setInputFiles(file);
+  await expect(page.getByText("Backup restored", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await openDrawerIfMobile(page);
+  await expect(page.getByRole("button", { name: /^Backup Vale/ })).toBeVisible();
 });

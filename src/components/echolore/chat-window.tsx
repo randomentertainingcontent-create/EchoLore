@@ -10,16 +10,17 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import type { Campaign, Message } from "@/types/echolore";
-import { useMockUser } from "@/hooks/use-mock-user";
+import type { Campaign } from "@/types/echolore";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useToast } from "@/hooks/use-toast";
 import { useByokStore } from "@/store/byok-store";
 import { usePrefsStore } from "@/store/prefs-store";
 import { useCampaignStore } from "@/store/campaign-store";
-import { buildAuthHeaders, buildByokHeaders, HDR_OPENROUTER_KEY } from "@/lib/byok/headers";
+import { buildByokHeaders } from "@/lib/byok/headers";
+import { localDb, recall, type StoredMessage } from "@/lib/local-db";
+import { embedTexts, requestLoreUpdate } from "@/lib/story-client";
+import { fitWorkingMemory } from "@/lib/rag/compile-prompt";
 import { cn } from "@/lib/utils";
-import { drafts } from "@/lib/drafts";
 import { MessageItem, parseDirection } from "./message-item";
 import { LorebookPanel } from "./lorebook-panel";
 import { WORLD_TEMPLATES, type WorldTemplate } from "./presets";
@@ -30,6 +31,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OPENING = "[Direction: Set the opening scene. Show me where I am and what I notice, introduce someone or something that matters, and give me a reason to act.]";
 const CONTINUE = "[Direction: Continue the scene naturally from where it left off.]";
 const TWIST = "[Direction: Introduce an unexpected but fitting twist.]";
+/** The lorebook keeper runs after every Nth stored message (2 per turn). */
+const LORE_EVERY = 4;
+
+/** Composer drafts survive switching worlds (in memory only). */
+const drafts = new Map<string, string>();
 
 type Mode = "do" | "say" | "direct";
 const MODES: { value: Mode; label: string; icon: typeof Footprints; placeholder: string }[] = [
@@ -44,7 +50,7 @@ function formatMove(mode: Mode, text: string) {
   return text;
 }
 
-function toUI(messages: Message[]): UIMessage[] {
+function toUI(messages: StoredMessage[]): UIMessage[] {
   return messages.map((m) => ({ id: m.id, role: m.role, parts: [{ type: "text", text: m.content }] }));
 }
 
@@ -57,29 +63,10 @@ function friendlyError(error: Error | undefined | null): string | null {
   const raw = error.message ?? "";
   try {
     const parsed = JSON.parse(raw) as { error?: unknown };
-    if (typeof parsed.error === "string") {
-      if (parsed.error === "Invalid provider settings") return "Your API settings look invalid. Check the key and model names.";
-      if (parsed.error === "Unauthorized") return "Your session expired. Sign in again.";
-      return parsed.error.endsWith(".") ? parsed.error : `${parsed.error}.`;
-    }
+    if (typeof parsed.error === "string") return parsed.error.endsWith(".") ? parsed.error : `${parsed.error}.`;
   } catch {}
   if (/failed to fetch|network/i.test(raw)) return "Couldn’t reach EchoLore. Check your connection.";
   return raw && raw.length < 300 ? raw : "The reply could not finish.";
-}
-
-function sleep(ms: number, signal?: AbortSignal | null) {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
-  });
-}
-
-async function fetchHistory(campaignId: string, signal?: AbortSignal): Promise<Message[]> {
-  const response = await fetch(`/api/messages/${campaignId}`, { headers: await buildAuthHeaders(), signal });
-  if (!response.ok) throw new Error("Your story could not be loaded. Check your connection or sign in again, then retry.");
-  const data = await response.json();
-  return data.messages as Message[];
 }
 
 function download(filename: string, content: string) {
@@ -91,6 +78,13 @@ function download(filename: string, content: string) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function parseState(json: string | null): Record<string, unknown> {
+  try {
+    const value: unknown = json ? JSON.parse(json) : {};
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  } catch { return {}; }
 }
 
 export interface ChatWindowProps {
@@ -117,10 +111,9 @@ function TopBar({ mobileNav, children }: { mobileNav?: ReactNode; children?: Rea
 
 export function ChatWindow(props: ChatWindowProps) {
   const { campaign, mobileNav, onOpenNewCampaign, onOpenSettings } = props;
-  const { userId } = useMockUser();
   const hasKey = useByokStore((s) => Boolean(s.config.openrouterKey.trim()));
 
-  if (!campaign || !userId) {
+  if (!campaign) {
     return (
       <div className="flex h-full flex-col">
         <TopBar mobileNav={mobileNav}><span className="text-sm font-medium">EchoLore</span></TopBar>
@@ -128,37 +121,29 @@ export function ChatWindow(props: ChatWindowProps) {
       </div>
     );
   }
-  return <ActiveChat key={`${userId}:${campaign.id}`} {...props} campaign={campaign} userId={userId} hasKey={hasKey} />;
+  return <ActiveChat key={campaign.id} {...props} campaign={campaign} hasKey={hasKey} />;
 }
 
-type ActiveProps = ChatWindowProps & { campaign: Campaign; userId: string; hasKey: boolean };
+type ActiveProps = ChatWindowProps & { campaign: Campaign; hasKey: boolean };
 
 function ActiveChat(props: ActiveProps) {
   const { campaign } = props;
-  const [history, setHistory] = useState<Message[]>([]);
-  const [historyStatus, setHistoryStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [history, setHistory] = useState<StoredMessage[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetchHistory(campaign.id, controller.signal).then((messages) => {
-      if (controller.signal.aborted) return;
-      setHistory(messages);
-      setHistoryStatus("ready");
-    }).catch((e) => {
-      if (controller.signal.aborted) return;
-      setHistoryError(e instanceof Error ? e.message : "Could not load your story.");
-      setHistoryStatus("error");
-    });
-    return () => controller.abort();
+    let cancelled = false;
+    localDb.listMessages(campaign.id).then((messages) => { if (!cancelled) setHistory(messages); })
+      .catch((e) => { if (!cancelled) setHistoryError(e instanceof Error ? e.message : "Could not load your story."); });
+    return () => { cancelled = true; };
   }, [campaign.id, attempt]);
 
-  if (historyStatus === "ready") return <ActiveChatInner {...props} initialMessages={history} />;
+  if (history) return <ActiveChatInner {...props} initialMessages={history} />;
   return (
     <div className="flex h-full flex-col">
       <TopBar mobileNav={props.mobileNav}><span className="min-w-0 truncate text-sm font-medium">{campaign.title}</span></TopBar>
-      {historyStatus === "loading" ? (
+      {!historyError ? (
         <div className="el-ember-bg flex flex-1 items-center justify-center px-6" role="status">
           <Loader2 className="mr-3 h-5 w-5 animate-spin text-primary" /><p className="text-sm text-muted-foreground">Loading the story so far…</p>
         </div>
@@ -167,7 +152,7 @@ function ActiveChat(props: ActiveProps) {
           <div className="max-w-md">
             <h2 className="text-lg font-semibold">Could not load the story</h2>
             <p role="alert" className="mt-2 text-sm leading-relaxed text-muted-foreground">{historyError}</p>
-            <Button variant="outline" className="mt-4" onClick={() => { setHistoryStatus("loading"); setHistoryError(null); setAttempt((n) => n + 1); }}>Retry history</Button>
+            <Button variant="outline" className="mt-4" onClick={() => { setHistoryError(null); setAttempt((n) => n + 1); }}>Retry history</Button>
           </div>
         </div>
       )}
@@ -175,11 +160,12 @@ function ActiveChat(props: ActiveProps) {
   );
 }
 
-function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateUpdatedAt, lorePending, mobileNav, initialMessages, onOpenSettings, onEditWorld, onRefreshLore }: ActiveProps & { initialMessages: Message[] }) {
+function ActiveChatInner({ campaign, hasKey, worldStateJson, worldStateUpdatedAt, lorePending, mobileNav, initialMessages, onOpenSettings, onEditWorld, onRefreshLore }: ActiveProps & { initialMessages: StoredMessage[] }) {
   const chatModel = useByokStore((s) => s.config.chatModel);
   const textSize = usePrefsStore((s) => s.textSize);
   const storyFont = usePrefsStore((s) => s.storyFont);
   const setLorePending = useCampaignStore((s) => s.setLorePending);
+  const saveLore = useCampaignStore((s) => s.saveLore);
   const touch = useCampaignStore((s) => s.touch);
   const { toast } = useToast();
   const wide = useMediaQuery("(min-width: 1280px)");
@@ -190,21 +176,27 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
   const [showLatest, setShowLatest] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [waiting, setWaiting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [rewindTarget, setRewindTarget] = useState<{ index: number; text: string; count: number } | null>(null);
   const [rewinding, setRewinding] = useState(false);
-  const sent = useRef<{ text: string; draft: string; base: UIMessage[] }>({ text: "", draft: "", base: [] });
-  const lorePendingRef = useRef(false);
+  /** The saved story, in order. The single source of truth for persistence. */
+  const records = useRef<StoredMessage[]>(initialMessages);
+  const sent = useRef<{ text: string; draft: string; base: StoredMessage[]; embedding: number[] | null }>({ text: "", draft: "", base: [], embedding: null });
   const busy = useRef(false);
   const nearBottom = useRef(true);
-  const reconcileToken = useRef(0);
   const alive = useRef(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
-  const loreTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const setMessagesRef = useRef<(messages: UIMessage[]) => void>(() => {});
+  const openRef = useRef(showLore);
+
+  useEffect(() => { openRef.current = showLore; }, [showLore]);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const setInput = useCallback((value: string | ((current: string) => string)) => {
     setInputState((current) => {
@@ -214,112 +206,107 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
     });
   }, [campaign.id]);
 
-  useEffect(() => {
-    alive.current = true;
-    const timers = loreTimers.current;
-    return () => { alive.current = false; reconcileToken.current += 1; timers.forEach(clearTimeout); };
-  }, []);
-
+  // The request body is assembled in `send` (memory recall included), so the transport stays stateless.
   const transport = useMemo(() => new DefaultChatTransport({
     api: "/api/chat",
-    headers: async () => ({ ...await buildByokHeaders(userId, useByokStore.getState().config) }),
-    // A previous reply (or a lorebook update) may still hold the story lock: wait politely.
-    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-      for (let attempt = 0; ; attempt += 1) {
-        const response = await fetch(input, init);
-        if (response.status !== 409 || attempt >= 15) { setWaiting(false); return response; }
-        setWaiting(true);
-        try { await sleep(2000, init?.signal); }
-        catch (error) { setWaiting(false); throw error; }
-      }
-    },
-    prepareSendMessagesRequest: ({ messages }) => {
-      const { responseLength, creativity } = usePrefsStore.getState();
-      const last = messages.at(-1);
-      return { body: { campaignId: campaign.id, message: last ? textOf(last) : "", options: { responseLength, creativity } } };
-    },
-  }), [userId, campaign.id]);
+    headers: () => ({ ...buildByokHeaders(useByokStore.getState().config) }),
+    prepareSendMessagesRequest: ({ body }) => ({ body: body ?? {} }),
+  }), []);
 
-  const syncHistory = useCallback(async () => {
+  /** World, lorebook, working memory and recalled memories for one reply. */
+  const buildRequest = useCallback(async (message: string, base: StoredMessage[]) => {
+    const { responseLength, creativity } = usePrefsStore.getState();
+    const working = fitWorkingMemory([...base].reverse().filter((m) => m.role !== "system"), 24000, 16);
+    const inWorking = new Set(working.map((m) => m.id));
+    const vectors = await embedTexts([message]);
+    const memories = vectors ? recall(vectors[0], base, inWorking, 5).map(({ message: m, similarity }) => ({
+      role: m.role === "user" ? "user" as const : "assistant" as const, content: m.content.slice(0, 8000), similarity, createdAt: m.createdAt,
+    })) : [];
+    const { id, worldDescription, userPersona, aiPersona } = campaign;
+    const stored = await localDb.getCampaign(id).catch(() => null);
+    return {
+      embedding: vectors?.[0] ?? null,
+      body: {
+        world: { worldDescription, userPersona, aiPersona },
+        worldState: stored?.worldState ?? parseState(useCampaignStore.getState().activeWorldState),
+        history: working.map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content })),
+        memories,
+        message,
+        options: { responseLength, creativity },
+      },
+    };
+  }, [campaign]);
+
+  /** Every couple of turns, let the keeper update the lorebook in the background. */
+  const runLore = useCallback(async () => {
+    const id = campaign.id;
+    setLorePending(true);
     try {
-      const server = await fetchHistory(campaign.id);
-      if (alive.current) setMessagesRef.current(toUI(server));
-      return server;
-    } catch { return null; }
-  }, [campaign.id]);
-
-  const scheduleLoreRefresh = useCallback(() => {
-    loreTimers.current.forEach(clearTimeout);
-    const before = useCampaignStore.getState().activeWorldStateUpdatedAt;
-    const delays = [4000, 9000, 16000, 28000];
-    loreTimers.current = delays.map((delay, index) => setTimeout(async () => {
-      if (!alive.current || !lorePendingRef.current) return;
-      await onRefreshLore();
-      const after = useCampaignStore.getState().activeWorldStateUpdatedAt;
-      if (after !== before || index === delays.length - 1) {
-        lorePendingRef.current = false;
-        setLorePending(false);
-        if (after !== before) setLoreFresh(true);
-      }
-    }, delay));
-  }, [onRefreshLore, setLorePending]);
-
-  /** After a Stop or a dropped connection, find out what the server actually saved. */
-  const reconcile = useCallback(async () => {
-    const token = ++reconcileToken.current;
-    const { text, draft, base } = sent.current;
-    const anchor = base.at(-1)?.id;
-    setSyncing(true);
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      await sleep(attempt === 0 ? 800 : 2500).catch(() => {});
-      if (!alive.current || token !== reconcileToken.current) return;
-      const server = await fetchHistory(campaign.id).catch(() => null);
-      if (!server || !alive.current || token !== reconcileToken.current) continue;
-      const n = server.length;
-      const anchored = anchor && UUID.test(anchor) ? server[n - 3]?.id === anchor : n === base.length + 2 || (n === 2 && base.length === 0);
-      if (n >= 2 && anchored && server[n - 2].role === "user" && server[n - 2].content === text && server[n - 1].role === "assistant") {
-        setMessagesRef.current(toUI(server));
-        setSyncing(false);
-        touch(campaign.id);
-        return;
-      }
-      if (attempt >= 3 && n === base.length && (!anchor || server.at(-1)?.id === anchor)) break;
+      const stored = await localDb.getCampaign(id);
+      const state = await requestLoreUpdate(stored?.worldState ?? {}, records.current.slice(-LORE_EVERY));
+      await saveLore(id, state);
+      if (alive.current && !openRef.current) setLoreFresh(true);
+    } catch {
+      // The keeper is best-effort; the story continues without it.
+    } finally {
+      if (useCampaignStore.getState().activeId === id) setLorePending(false);
     }
-    if (!alive.current || token !== reconcileToken.current) return;
-    const server = await fetchHistory(campaign.id).catch(() => null);
-    if (server) setMessagesRef.current(toUI(server));
-    if (draft) setInput((current) => current.trim() ? current : draft);
-    setNotice(draft ? "Nothing was saved from that reply, so your message is back in the composer." : "Nothing was saved from that reply.");
-    setSyncing(false);
-  }, [campaign.id, setInput, touch]);
+  }, [campaign.id, saveLore, setLorePending]);
+
+  /** Save a finished (or stopped) turn to this browser. */
+  const persistTurn = useCallback(async (replyText: string, stopped: boolean) => {
+    const { text, draft, base, embedding } = sent.current;
+    const reply = replyText.trim().slice(0, 16000);
+    if (!reply) {
+      setMessagesRef.current(toUI(base));
+      if (draft) setInput((current) => current.trim() ? current : draft);
+      setNotice(draft ? "Stopped before the narrator wrote anything, so your move is back in the composer." : "Stopped before the narrator wrote anything.");
+      return;
+    }
+    setSyncing(true);
+    const now = Date.now();
+    const id = campaign.id;
+    const userRecord: StoredMessage = { id: crypto.randomUUID(), campaignId: id, role: "user", content: text, createdAt: new Date(now).toISOString(), embedding };
+    const replyRecord: StoredMessage = { id: crypto.randomUUID(), campaignId: id, role: "assistant", content: reply, createdAt: new Date(now + 1).toISOString(), embedding: null };
+    try {
+      await localDb.putMessages([userRecord, replyRecord]);
+      records.current = [...base, userRecord, replyRecord];
+      if (alive.current) setMessagesRef.current(toUI(records.current));
+      if (stopped) setNotice("Reply stopped. What the narrator wrote so far is saved.");
+      void touch(id);
+      void embedTexts([reply]).then(async (vectors) => {
+        if (!vectors) return;
+        replyRecord.embedding = vectors[0];
+        await localDb.putMessages([replyRecord]).catch(() => {});
+      });
+      if (records.current.length % LORE_EVERY === 0) void runLore();
+    } catch (e) {
+      setSendError(e instanceof Error ? `Couldn’t save that turn: ${e.message}` : "Couldn’t save that turn.");
+    } finally {
+      if (alive.current) setSyncing(false);
+    }
+  }, [campaign.id, runLore, setInput, touch]);
 
   const { messages, setMessages, sendMessage, status, error, stop, clearError } = useChat<UIMessage>({
     id: campaign.id,
     transport,
     messages: toUI(initialMessages),
-    onData: (part) => {
-      if (part.type === "data-lore") { lorePendingRef.current = true; setLorePending(true); }
-    },
-    onFinish: ({ isError, isAbort, isDisconnect }) => {
+    onFinish: ({ message, isError, isAbort, isDisconnect }) => {
       busy.current = false;
       if (isError) return;
-      if (isAbort || isDisconnect) { void reconcile(); return; }
-      touch(campaign.id);
-      void syncHistory();
-      if (lorePendingRef.current) scheduleLoreRefresh();
+      void persistTurn(message.role === "assistant" ? textOf(message) : "", isAbort || isDisconnect);
     },
     onError: () => {
       busy.current = false;
-      setMessagesRef.current(sent.current.base);
+      setMessagesRef.current(toUI(sent.current.base));
       const { draft } = sent.current;
       if (draft) setInput((current) => current.trim() ? current : draft);
-      if (lorePendingRef.current) { lorePendingRef.current = false; setLorePending(false); }
     },
   });
   useEffect(() => { setMessagesRef.current = setMessages; }, [setMessages]);
 
   const isStreaming = status === "streaming" || status === "submitted";
-  const canAct = !isStreaming && !syncing && !rewinding;
+  const canAct = !isStreaming && !syncing && !rewinding && !preparing;
   const lastIndex = messages.length - 1;
   const lastAssistantIndex = messages.at(-1)?.role === "assistant" ? lastIndex : -1;
   const errorText = sendError ?? friendlyError(error);
@@ -345,29 +332,31 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const send = useCallback(async (text: string, opts: { draft: string; base?: UIMessage[] }) => {
+  const send = useCallback(async (text: string, opts: { draft: string }) => {
     const message = text.trim();
-    if (!message || busy.current || isStreaming || !hasKey) return;
+    if (!message || busy.current || isStreaming || syncing || !hasKey) return;
     busy.current = true;
-    reconcileToken.current += 1;
-    setSyncing(false);
-    sent.current = { text: message, draft: opts.draft, base: opts.base ?? messages };
+    const base = records.current;
     setSendError(null);
     setNotice(null);
     clearError();
-    lorePendingRef.current = false;
     nearBottom.current = true;
     setShowLatest(false);
     if (opts.draft) setInput("");
+    setPreparing(true);
     try {
-      await sendMessage({ text: message });
+      const request = await buildRequest(message, base);
+      sent.current = { text: message, draft: opts.draft, base, embedding: request.embedding };
+      setPreparing(false);
+      await sendMessage({ text: message }, { body: request.body });
     } catch {
-      setSendError("Could not send your message. Your draft is kept below.");
+      setSendError("Could not send your message.");
       if (opts.draft) setInput((current) => current.trim() ? current : opts.draft);
     } finally {
+      setPreparing(false);
       busy.current = false;
     }
-  }, [isStreaming, hasKey, messages, clearError, setInput, sendMessage]);
+  }, [isStreaming, syncing, hasKey, clearError, setInput, sendMessage, buildRequest]);
 
   const submitComposer = useCallback(() => {
     const text = input.trim();
@@ -375,28 +364,24 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
     void send(formatMove(mode, text), { draft: input });
   }, [input, mode, send]);
 
-  async function rewindFrom(messageId: string) {
-    const headers = await buildAuthHeaders();
-    const res = await fetch(`/api/messages/${campaign.id}?from=${encodeURIComponent(messageId)}`, { method: "DELETE", headers });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error ?? "Could not rewind the story.");
-    }
+  /** Remove a message and everything after it. */
+  async function rewindFrom(index: number) {
+    const removed = records.current.slice(index);
+    await localDb.deleteMessages(removed.map((m) => m.id));
+    records.current = records.current.slice(0, index);
+    setMessages(toUI(records.current));
   }
 
   async function regenerate() {
     const index = lastAssistantIndex;
-    const userMessage = messages[index - 1];
-    if (index < 1 || userMessage?.role !== "user" || !UUID.test(userMessage.id) || !canAct) return;
-    const text = textOf(userMessage);
+    const userMessage = records.current[index - 1];
+    if (index < 1 || userMessage?.role !== "user" || !canAct) return;
     setRewinding(true);
     setNotice(null);
     try {
-      await rewindFrom(userMessage.id);
-      const base = messages.slice(0, index - 1);
-      setMessages(base);
+      await rewindFrom(index - 1);
       setRewinding(false);
-      await send(text, { draft: "", base });
+      await send(userMessage.content, { draft: "" });
     } catch (e) {
       setRewinding(false);
       setSendError(e instanceof Error ? e.message : "Could not regenerate.");
@@ -406,12 +391,9 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
   async function confirmRewind() {
     if (!rewindTarget) return;
     const { index, text } = rewindTarget;
-    const target = messages[index];
-    if (!target || !UUID.test(target.id)) { setRewindTarget(null); return; }
     setRewinding(true);
     try {
-      await rewindFrom(target.id);
-      setMessages(messages.slice(0, index));
+      await rewindFrom(index);
       const direction = parseDirection(text);
       if (direction !== null) { setMode("direct"); setInput(direction); }
       else if (/^"[\s\S]*"$/.test(text)) { setMode("say"); setInput(text.slice(1, -1)); }
@@ -428,16 +410,17 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
   }
 
   async function editMessage(id: string, content: string) {
-    if (!UUID.test(id)) throw new Error("Wait a moment for this message to finish saving.");
-    const config = useByokStore.getState().config;
-    const res = await fetch(`/api/messages/${campaign.id}`, {
-      method: "PATCH",
-      headers: { ...await buildAuthHeaders(), "Content-Type": "application/json", ...(config.openrouterKey.trim() ? { [HDR_OPENROUTER_KEY]: config.openrouterKey.trim() } : {}) },
-      body: JSON.stringify({ messageId: id, content }),
+    const index = records.current.findIndex((m) => m.id === id);
+    if (index === -1) throw new Error("Wait a moment for this message to finish saving.");
+    const updated: StoredMessage = { ...records.current[index], content, embedding: null };
+    await localDb.putMessages([updated]);
+    records.current = records.current.map((m) => (m.id === id ? updated : m));
+    setMessages((current) => current.map((m) => (m.id === id ? { ...m, parts: [{ type: "text", text: content }] } : m)));
+    void embedTexts([content]).then(async (vectors) => {
+      if (!vectors) return;
+      updated.embedding = vectors[0];
+      await localDb.putMessages([updated]).catch(() => {});
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? "Could not save this edit.");
-    setMessages((current) => current.map((m) => (m.id === id ? { ...m, parts: [{ type: "text", text: body.message?.content ?? content }] } : m)));
   }
 
   const copy = useCallback((text: string) => {
@@ -460,7 +443,7 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
 
   const openLore = () => { setShowLore((open) => !open); setLoreFresh(false); };
   const lorePanel = (
-    <LorebookPanel campaign={campaign} userId={userId} worldStateJson={worldStateJson} updatedAt={worldStateUpdatedAt} pending={lorePending}
+    <LorebookPanel campaign={campaign} worldStateJson={worldStateJson} updatedAt={worldStateUpdatedAt} pending={lorePending}
       onRefresh={() => void onRefreshLore()} onEditWorld={onEditWorld} className="h-full" />
   );
   const currentMode = MODES.find((m) => m.value === mode)!;
@@ -522,13 +505,13 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
                 })}
               </ul>
             )}
-            {isStreaming && (status === "submitted" || messages.at(-1)?.role !== "assistant") && (
+            {(preparing || (isStreaming && (status === "submitted" || messages.at(-1)?.role !== "assistant"))) && (
               <p role="status" className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
                 <span className="el-typing" aria-hidden="true"><span /><span /><span /></span>
-                {waiting ? "Waiting for the previous reply to finish saving…" : "The narrator is thinking…"}
+                {preparing ? "Recalling the story…" : "The narrator is thinking…"}
               </p>
             )}
-            {syncing && <p role="status" className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving what was written…</p>}
+            {syncing && <p role="status" className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</p>}
           </div>
         </div>
         {showLatest && (
@@ -584,7 +567,7 @@ function ActiveChatInner({ campaign, userId, hasKey, worldStateJson, worldStateU
                 </div>
                 {isStreaming
                   ? <Button type="button" variant="outline" className="h-9 gap-2 rounded-full" onClick={() => void stop()}><Square className="h-3.5 w-3.5" /> Stop</Button>
-                  : <Button type="submit" disabled={!input.trim() || !hasKey || syncing || rewinding} className="h-9 gap-2 rounded-full"><Send className="h-4 w-4" /> Send</Button>}
+                  : <Button type="submit" disabled={!input.trim() || !hasKey || syncing || rewinding || preparing} className="h-9 gap-2 rounded-full"><Send className="h-4 w-4" /> Send</Button>}
               </div>
             </form>
             <div id="composer-hint" className="mt-1.5 flex flex-wrap justify-between gap-x-4 gap-y-1 px-1 text-[11px] leading-relaxed text-muted-foreground">

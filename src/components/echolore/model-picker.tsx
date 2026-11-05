@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Switch } from "@/components/ui/switch";
-import { buildAuthHeaders } from "@/lib/byok/headers";
 import { MODEL_ID_PATTERN } from "@/lib/byok/headers";
 import { cn } from "@/lib/utils";
 import type { ModelSummary } from "@/types/echolore";
@@ -15,7 +14,7 @@ let catalogue: Promise<ModelSummary[]> | null = null;
 
 function loadModels(): Promise<ModelSummary[]> {
   catalogue ??= (async () => {
-    const res = await fetch("/api/models", { headers: await buildAuthHeaders() });
+    const res = await fetch("/api/models");
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? "Could not load models");
     return body.models as ModelSummary[];
