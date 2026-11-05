@@ -1,5 +1,5 @@
 // EchoLore shared types
-// These mirror the Prisma models 1:1 and are used across client + server.
+// Used across client + server.
 
 export type MessageRole = "user" | "assistant" | "system";
 
@@ -61,3 +61,18 @@ export interface CompiledPrompt {
   // ModelMessage-shaped ({role, content}) — passed directly to streamText
   messages: { role: MessageRole; content: string }[];
 }
+
+// --- OpenRouter model catalogue (GET /api/models) ---
+
+export interface ModelSummary {
+  id: string;
+  name: string;
+  contextLength: number | null;
+  promptPrice: number | null; // USD per 1M tokens
+  completionPrice: number | null; // USD per 1M tokens
+  free: boolean;
+}
+
+// --- Storytelling preferences ---
+
+export type ResponseLength = "short" | "medium" | "long";

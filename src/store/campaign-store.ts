@@ -6,13 +6,15 @@ import { buildAuthHeaders } from "@/lib/byok/headers";
 import { browserClient } from "@/lib/supabase";
 import type { Campaign, NewCampaignInput } from "@/types/echolore";
 
-type CampaignWithState = Campaign & { worldState?: { stateJson: unknown } | null };
+type CampaignWithState = Campaign & { worldState?: { stateJson: unknown; updatedAt?: string | null } | null };
 
 interface CampaignState {
   campaigns: Campaign[];
   ownerId: string | null;
   activeId: string | null;
   activeWorldState: string | null;
+  activeWorldStateUpdatedAt: string | null;
+  lorePending: boolean;
   loading: boolean;
   error: string | null;
   setOwner: (ownerId: string | null) => void;
@@ -22,6 +24,11 @@ interface CampaignState {
   remove: (userId: string, id: string) => Promise<void>;
   setActive: (id: string | null) => void;
   hydrateActive: (userId: string, id: string) => Promise<void>;
+  update: (userId: string, id: string, patch: Partial<Pick<Campaign, "title" | "worldDescription" | "userPersona" | "aiPersona">>) => Promise<Campaign>;
+  saveLore: (userId: string, id: string, state: Record<string, unknown>) => Promise<void>;
+  setLorePending: (pending: boolean) => void;
+  touch: (id: string) => void;
+  duplicate: (userId: string, id: string) => Promise<Campaign>;
 }
 
 function stringifyState(stateJson: unknown): string | null {
@@ -36,7 +43,7 @@ function savedSelection(persisted: unknown) {
   return { ownerId, activeId: ownerId && typeof saved.activeId === "string" ? saved.activeId : null };
 }
 
-const empty = { campaigns: [] as Campaign[], activeId: null, activeWorldState: null, loading: false, error: null };
+const empty = { campaigns: [] as Campaign[], activeId: null, activeWorldState: null, activeWorldStateUpdatedAt: null, lorePending: false, loading: false, error: null };
 
 export const useCampaignStore = create<CampaignState>()(
   persist(
@@ -118,6 +125,8 @@ export const useCampaignStore = create<CampaignState>()(
             campaigns: [campaign, ...s.campaigns.filter((c) => c.id !== campaign.id)],
             activeId: campaign.id,
             activeWorldState: stringifyState(campaign.worldState?.stateJson),
+            activeWorldStateUpdatedAt: campaign.worldState?.updatedAt ?? campaign.createdAt ?? null,
+            lorePending: false,
             loading: false,
             error: null,
           }));
@@ -144,8 +153,9 @@ export const useCampaignStore = create<CampaignState>()(
         },
         setActive: (id) => {
           if (!owner || owner !== get().ownerId || (id !== null && !get().campaigns.some((c) => c.id === id && c.userId === owner))) return;
+          if (id === get().activeId) return;
           stateRequest += 1;
-          set({ activeId: id, activeWorldState: null });
+          set({ activeId: id, activeWorldState: null, activeWorldStateUpdatedAt: null, lorePending: false });
         },
         hydrateActive: async (userId, id) => {
           const epoch = generation;
@@ -161,11 +171,67 @@ export const useCampaignStore = create<CampaignState>()(
             if (!res.ok) throw new Error(body.error ?? "Failed to load lorebook");
             const campaign = body.campaign as CampaignWithState;
             if (campaign?.userId !== userId || campaign.id !== id) throw new Error("Could not verify world ownership.");
-            set({ activeWorldState: stringifyState(campaign.worldState?.stateJson) });
+            set({ activeWorldState: stringifyState(campaign.worldState?.stateJson), activeWorldStateUpdatedAt: campaign.worldState?.updatedAt ?? null });
           } catch {
             if (relevant()) set({ activeWorldState: null });
           }
         },
+        update: async (userId, id, patch) => {
+          const epoch = generation;
+          const headers = await headersFor(userId, epoch);
+          const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          });
+          const body = await res.json();
+          await assertSession(userId, epoch);
+          if (!res.ok) throw new Error(body.error ?? "Could not save your changes");
+          const campaign = body.campaign as Campaign;
+          if (campaign?.userId !== userId || campaign.id !== id) throw new Error("Could not verify world ownership.");
+          invalidateList();
+          set((s) => ({ campaigns: s.campaigns.map((c) => (c.id === id ? campaign : c)) }));
+          return campaign;
+        },
+        saveLore: async (userId, id, state) => {
+          const epoch = generation;
+          const headers = await headersFor(userId, epoch);
+          const res = await fetch(`/api/lorebook/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ state }),
+          });
+          const body = await res.json();
+          await assertSession(userId, epoch);
+          if (!res.ok) throw new Error(body.error ?? "Could not save the lorebook");
+          if (get().activeId === id) {
+            stateRequest += 1;
+            set({ activeWorldState: stringifyState(body.state), activeWorldStateUpdatedAt: body.updatedAt ?? null });
+          }
+        },
+        setLorePending: (lorePending) => set({ lorePending }),
+        duplicate: async (userId, id) => {
+          const epoch = generation;
+          const headers = await headersFor(userId, epoch);
+          const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}`, { headers });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error ?? "Could not copy this world");
+          const source = body.campaign as CampaignWithState;
+          const state = source.worldState?.stateJson;
+          const suffix = " (copy)";
+          return get().create(userId, {
+            title: source.title.length + suffix.length > 120 ? `${source.title.slice(0, 120 - suffix.length)}${suffix}` : `${source.title}${suffix}`,
+            worldDescription: source.worldDescription,
+            userPersona: source.userPersona,
+            aiPersona: source.aiPersona,
+            startingState: state && typeof state === "object" && !Array.isArray(state) ? state as Record<string, unknown> : {},
+          });
+        },
+        touch: (id) => set((s) => {
+          const found = s.campaigns.find((c) => c.id === id);
+          if (!found) return {};
+          return { campaigns: [{ ...found, updatedAt: new Date().toISOString() }, ...s.campaigns.filter((c) => c.id !== id)] };
+        }),
       };
     },
     {

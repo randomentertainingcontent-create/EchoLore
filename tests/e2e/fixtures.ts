@@ -24,11 +24,12 @@ export type MockState = {
   requests: string[];
   chatBodies: { campaignId: string; message: string }[];
   blocked: string[];
+  idCounter: number;
 };
 
 export const test = base.extend<{ mock: MockState }>({
   mock: [async ({ context }, use) => {
-    const state: MockState = { campaigns: [], messages: {}, failChat: false, failHistory: false, failCreate: false, requests: [], chatBodies: [], blocked: [] };
+    const state: MockState = { campaigns: [], messages: {}, failChat: false, failHistory: false, failCreate: false, requests: [], chatBodies: [], blocked: [], idCounter: 0 };
     await context.route("**/*", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -78,16 +79,60 @@ export const test = base.extend<{ mock: MockState }>({
           await json({ messages: state.messages[url.pathname.split("/").at(-1)!] ?? [] });
           return;
         }
+        if (url.pathname.startsWith("/api/messages/") && method === "DELETE") {
+          const list = state.messages[url.pathname.split("/").at(-1)!] ?? [];
+          const index = list.findIndex((m) => m.id === url.searchParams.get("from"));
+          expect(index).toBeGreaterThanOrEqual(0);
+          const removed = list.splice(index);
+          await json({ deleted: removed.length });
+          return;
+        }
+        if (url.pathname.startsWith("/api/messages/") && method === "PATCH") {
+          const body = request.postDataJSON();
+          const message = (state.messages[url.pathname.split("/").at(-1)!] ?? []).find((m) => m.id === body.messageId);
+          expect(message).toBeDefined();
+          message!.content = body.content;
+          await json({ message });
+          return;
+        }
+        if (url.pathname.startsWith("/api/lorebook/") && method === "PUT") {
+          const campaign = state.campaigns.find((item) => item.id === url.pathname.split("/").at(-1));
+          expect(campaign).toBeDefined();
+          campaign!.worldState = { stateJson: request.postDataJSON().state };
+          await json({ state: campaign!.worldState.stateJson, updatedAt: new Date().toISOString() });
+          return;
+        }
+        if (url.pathname.startsWith("/api/campaigns/") && method === "PATCH") {
+          const campaign = state.campaigns.find((item) => item.id === url.pathname.split("/").at(-1));
+          expect(campaign).toBeDefined();
+          Object.assign(campaign!, request.postDataJSON(), { updatedAt: new Date().toISOString() });
+          const { worldState: _ignored, ...plain } = campaign!;
+          await json({ campaign: plain });
+          return;
+        }
+        if (url.pathname === "/api/models" && method === "GET") {
+          await json({ models: [
+            { id: "openai/gpt-oss-120b:free", name: "OpenAI: gpt-oss-120b (free)", contextLength: 131072, promptPrice: 0, completionPrice: 0, free: true },
+            { id: "anthropic/claude-test", name: "Anthropic: Claude Test", contextLength: 200000, promptPrice: 3, completionPrice: 15, free: false },
+          ] });
+          return;
+        }
+        if (url.pathname === "/api/key-check" && method === "POST") {
+          expect(request.headers()["x-openrouter-key"]).toBe(fakeKey);
+          await json({ ok: true, label: "local test", usage: 0.12, limit: null, limitRemaining: null, freeTier: true });
+          return;
+        }
         if (url.pathname === "/api/chat" && method === "POST") {
           expect(request.headers()["x-openrouter-key"]).toBe(fakeKey);
           const body = request.postDataJSON();
-          expect(body).toEqual({ campaignId: expect.any(String), message: expect.any(String) });
-          state.chatBodies.push(body);
+          expect(body).toEqual({ campaignId: expect.any(String), message: expect.any(String), options: { responseLength: expect.any(String), creativity: expect.any(Number) } });
+          state.chatBodies.push({ campaignId: body.campaignId, message: body.message });
           if (state.failChat) { await json({ error: "Mock narrator unavailable" }, 503); return; }
           const id = `reply-${state.chatBodies.length}`;
+          const nextId = () => `33333333-3333-4333-8333-${String(++state.idCounter).padStart(12, "0")}`;
           state.messages[body.campaignId].push(
-            { id: `user-${id}`, campaignId: body.campaignId, role: "user", content: body.message, createdAt: new Date().toISOString() },
-            { id, campaignId: body.campaignId, role: "assistant", content: reply, createdAt: new Date().toISOString() },
+            { id: nextId(), campaignId: body.campaignId, role: "user", content: body.message, createdAt: new Date().toISOString() },
+            { id: nextId(), campaignId: body.campaignId, role: "assistant", content: reply, createdAt: new Date().toISOString() },
           );
           const events = [
             { type: "start", messageId: id },
@@ -137,17 +182,31 @@ export async function signIn(page: Page) {
   await page.getByLabel("Email", { exact: true }).fill(user.email);
   await page.getByLabel("Password", { exact: true }).fill("local-test-password");
   await page.getByLabel("Password", { exact: true }).press("Enter");
-  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create your first world" })).toBeVisible();
+}
+
+export async function openDrawerIfMobile(page: Page) {
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const drawer = page.getByRole("button", { name: "Open world navigation" });
+  if (await drawer.isVisible()) {
+    await drawer.click();
+    await expect(page.getByRole("dialog", { name: "Your worlds", exact: true })).toBeVisible();
+  }
+}
+
+export async function signOut(page: Page) {
+  await openDrawerIfMobile(page);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
 }
 
 export async function openWorldForm(page: Page) {
   const firstWorld = page.getByRole("button", { name: "Create your first world" });
   if (await firstWorld.isVisible()) await firstWorld.click();
   else {
-    const drawer = page.getByRole("button", { name: "Open world navigation" });
-    if (await drawer.isVisible()) await drawer.click();
+    await openDrawerIfMobile(page);
     await page.getByRole("button", { name: "New World", exact: true }).click();
   }
+  await page.getByRole("button", { name: /Start from scratch/ }).click();
 }
 
 export async function fillWorld(page: Page, title: string) {
@@ -155,7 +214,8 @@ export async function fillWorld(page: Page, title: string) {
   await page.getByLabel("World description", { exact: true }).fill("A quiet forest with silver paths and lanterns.");
   await page.getByLabel("Your persona", { exact: true }).fill("A curious cartographer.");
   await page.getByLabel("Narrator’s role", { exact: true }).fill("Describe the world and offer gentle choices.");
-  await page.getByLabel("Starting state", { exact: false }).fill('{"location":"Lantern gate"}');
+  await page.getByRole("button", { name: "Edit as JSON", exact: true }).click();
+  await page.getByLabel("Starting state (JSON)", { exact: true }).fill('{"location":"Lantern gate"}');
 }
 
 export async function createWorld(page: Page, title: string) {
@@ -170,7 +230,7 @@ export async function addKey(page: Page) {
   await page.getByLabel("OpenRouter API key", { exact: true }).fill(fakeKey);
   await expect(page.getByRole("button", { name: "Show key", exact: true })).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "API settings", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toHaveCount(0);
 }
 
 export async function noOverflow(page: Page) {

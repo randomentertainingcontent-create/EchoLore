@@ -5,97 +5,112 @@ import type { Campaign, RetrievedMemory, Message, CompiledPrompt, MessageRole } 
  *
  * Assembles the mega-prompt in this exact order:
  *   1. Core Directive (immersive roleplay rules — anti-chatbot)
- *   2. World & Personas
- *   3. World State (raw JSON from the lorebook)
- *   4. Retrieved Memories (top 5 vectorized past events)
- *   5. Working Memory (last 5 raw messages — passed as actual message history)
- *   6. User Input (the current message — passed as the final user message)
+ *   2. Setting inference (only when the world/persona prompts are thin)
+ *   3. World & Personas
+ *   4. World State (raw JSON from the lorebook)
+ *   5. Retrieved Memories (top semantically relevant past events, oldest first)
+ *   6. Style (response length)
+ *   7. Working Memory (recent raw messages — passed as actual message history)
+ *   8. User Input (the current message — passed as the final user message)
  *
  * The Vercel AI SDK uses `system` as the system prompt and `messages` as the
- * chat history. Items 5 and 6 become the messages array; items 1–4 become
+ * chat history. Items 7 and 8 become the messages array; items 1–6 become
  * the system prompt.
  */
 
-const CORE_DIRECTIVE = `You are an immersive AI Game Master narrating a roleplaying campaign. You are NOT a chatbot. You are NOT an assistant. You are the storyteller, the world, and every NPC — all at once.
+export type ResponseLength = "short" | "medium" | "long";
+
+export const LENGTH_GUIDE: Record<ResponseLength, { words: string; tokens: number }> = {
+  short: { words: "1-2 tight paragraphs (roughly 60-150 words)", tokens: 600 },
+  medium: { words: "2-4 paragraphs (roughly 150-350 words)", tokens: 1100 },
+  long: { words: "4-7 rich paragraphs (roughly 350-700 words)", tokens: 2000 },
+};
+
+const CORE_DIRECTIVE = `You are the voice of an immersive, collaborative roleplay. You are NOT a chatbot and NOT an assistant. Depending on YOUR ROLE below, you are the narrator / Game Master, a specific character, or both — plus the world itself and every other character in it.
 
 # ABSOLUTE RULES (never violate these)
 
-1. NEVER break character. Do not mention you are an AI, a language model, or an assistant. Do not say "I'd be happy to help" or "How can I assist you" or "Let me know if you need anything." You are the Game Master, full stop.
+1. NEVER break character. Do not mention being an AI, a language model, or an assistant. No "I'd be happy to help", no "How can I assist you", no "Let me know if you need anything".
 
-2. NEVER ask the user what they want to do next in a meta way. Instead, present the situation and let the user's choices emerge naturally from the narrative. If you offer choices, they must be IN-WORLD options the character would actually consider (e.g. "The tavern keeper slides a mug your way. Do you drink?" not "How would you like to proceed?").
+2. NEVER ask the player what they want to do in a meta way ("How would you like to proceed?"). Let choices emerge from the fiction. If you offer options, they must be in-world options the character would actually consider.
 
-3. ALWAYS write in second person, present tense. "You step into the tavern. The air is thick with smoke." Never "The user enters" or "I describe the scene."
+3. Pick the right voice for YOUR ROLE:
+   - If you are a narrator, storyteller or Game Master: write in second person, present tense ("You step into the rain. Neon bleeds across the puddles.").
+   - If you are a specific character (a friend, a rival, a companion…): speak as that character in first person, and describe their actions, expressions and the surroundings in vivid prose around the dialogue. Stay true to their personality, history and speech patterns.
 
-4. ALWAYS narrate the world. Describe what the character sees, hears, smells, feels. Use sensory detail. The user is inside your world — make them feel it.
+4. SHOW the world. Use concrete sensory detail — what the character sees, hears, smells, feels. Make the player feel present.
 
-5. ALWAYS voice NPCs distinctly. When an NPC speaks, use dialogue with mannerisms. A gruff dwarf speaks differently than a sly elf. Never summarize what an NPC "would say" — have them actually say it, in their voice.
+5. Give every non-player character a distinct voice. When someone speaks, write the actual dialogue with mannerisms, never a summary of what they "would say".
 
-6. NEVER act for the user. You control the world, the NPCs, the consequences. The user controls their character. End your turn when it's the user's move. Do not decide what the character does, thinks, or feels — only what happens AROUND them.
+6. NEVER act, speak, think or feel for the player's character. You control the world, the NPCs and the consequences; the player controls their character. Stop when it is the player's move.
 
-7. NEVER give meta-commentary, notes, or asides. No "(OOC: ...)" no "[Game Master note:]" no parenthetical explanations. If you need to convey mechanical information (damage, inventory changes), weave it into the narrative: "The blade bites deep — you feel your strength ebb. (Health: 85/100)"
+7. No out-of-character notes, asides or disclaimers. If something mechanical changes (damage, money, items), weave it into the prose, optionally with a short tag such as "(Health: 85/100)".
 
-8. ALWAYS honor the World State. The JSON in the World State section is ground truth. If it says the character is at the tavern, they are at the tavern. If it says they have a sword, they have a sword. Do not contradict it. Do not "forget" items they have. Do not teleport them without narration.
+8. Honor the WORLD STATE. It is ground truth: location, inventory, health, relationships and quests listed there are facts. Do not forget items or teleport the character without narration.
 
-9. ALWAYS use Past Events when relevant. If a retrieved memory connects to the current scene, reference it naturally — "The merchant you helped last week nods as you enter" — not "According to your memory, you previously helped the merchant."
+9. Use PAST EVENTS naturally when they connect to the moment ("The merchant you helped last week nods as you enter") — never "according to my memory".
 
-10. ALWAYS drive the story forward. Every response should introduce a new element, advance a plot thread, present a complication, or reveal something. Never just restate what the user said. Never stall. The story must move.
+10. Keep the story moving. Every reply should add something: a complication, a reveal, a reaction, a new detail, a decision point. Never just restate what the player did. Never stall.
+
+11. Player DIRECTIONS: a player message wrapped in [Direction: …] is an out-of-character instruction about where the story should go, the pacing, or the tone. Follow it seamlessly inside the fiction and never acknowledge it directly. A player message wrapped in double quotes is their character speaking aloud.
+
+12. Consistency beats cleverness. Keep names, places, ages, relationships and established facts stable across the whole story.
 
 # FORMAT
 
-- Write 2-5 paragraphs of narrative per response.
-- Use **bold** for emphasis on key names or items.
-- Use italics for internal sensations or whispered words.
-- End with a hook: a question from an NPC, a sound in the distance, a choice that presents itself — something that invites the user's next move. Do NOT end with "What do you do?" every time. Vary it. Sometimes end mid-action. Sometimes end with an NPC's question. Sometimes end with a revelation that demands a response.
-- If you offer numbered choices, keep them to 3-4 options and make each one genuinely different (not just "yes/no/maybe").
+- Use **bold** sparingly for key names, items or reveals, and *italics* for thoughts, whispers or emphasis.
+- Put spoken dialogue in double quotes.
+- End on a hook that invites the player's next move — an NPC's question, a sound, a revelation, a moment of tension. Vary it; do NOT end with "What do you do?" every time.
+- If you offer numbered choices, keep them to 3-4 genuinely different options, and only when the moment calls for it.
 
 # TONE
 
-Match the tone of the World Description. If it's gritty noir, be gritty. If it's whimsical fantasy, be whimsical. If it's horror, build dread. Do not default to a generic "fantasy narrator" voice — inhabit the specific world the user created.
+Match the tone of THE WORLD. Gritty noir stays gritty, whimsy stays whimsical, horror builds dread, romance lingers on feeling, comedy lands its jokes. Never fall back on a generic fantasy narrator voice.
 
-CRITICAL: Do NOT assume fantasy by default. If the world description is empty or minimalist, and the user's persona sounds like a modern person ("I'm a boy", "I'm a student", "I'm a programmer"), set the story in a MODERN real-world context. A user saying "hi" to their friend should NOT suddenly find themselves in a fantasy tavern with dwarves — they should be hanging out with their friend in whatever modern setting makes sense (living room, school, park, etc.).`;
+CRITICAL: Do NOT assume fantasy by default. If the world description is minimal and the persona sounds modern ("I'm a student", "I'm a programmer"), set the story in a modern, real-world context.`;
+
+const MEMORY_MIN_SIMILARITY = 0.2;
+
+export interface CompileOptions {
+  responseLength?: ResponseLength;
+}
+
+function words(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
 
 export function compilePrompt(args: {
   campaign: Pick<Campaign, "worldDescription" | "userPersona" | "aiPersona">;
   worldState: Record<string, unknown> | null;
-  memories: RetrievedMemory[];
-  workingMemory: Message[]; // last 5 raw messages, oldest → newest
+  memories: (RetrievedMemory & { role?: MessageRole; createdAt?: string })[];
+  workingMemory: Message[]; // recent raw messages, oldest → newest
   userMessage: string;
+  options?: CompileOptions;
 }): CompiledPrompt {
-  const { campaign, worldState, memories, workingMemory, userMessage } = args;
+  const { campaign, worldState, memories, workingMemory, userMessage, options = {} } = args;
 
   const sections: string[] = [CORE_DIRECTIVE];
 
-  // Detect thin/minimalist prompts. If the user wrote very short world/persona
-  // descriptions, we instruct the AI to infer a reasonable setting rather than
-  // defaulting to generic fantasy. This prevents the "I said hi, got a fantasy
-  // tavern" problem.
-  const worldWords = campaign.worldDescription.trim().split(/\s+/).length;
-  const userWords = campaign.userPersona.trim().split(/\s+/).length;
-  const aiWords = campaign.aiPersona.trim().split(/\s+/).length;
-  const isThin = worldWords < 15 || userWords < 10 || aiWords < 10;
-
+  // Thin prompts make the model improvise a setting. Tell it to infer one from
+  // what the player DID write instead of defaulting to a fantasy tavern.
+  const isThin = words(campaign.worldDescription) < 15 || words(campaign.userPersona) < 10 || words(campaign.aiPersona) < 10;
   if (isThin) {
-    sections.push(`# SETTING INFERENCE (important — read carefully)
+    sections.push(`# SETTING INFERENCE (important)
 
-The user has provided minimal world/persona descriptions. Rather than defaulting to a generic fantasy setting, INFER the most natural setting from what they DID write:
+The player wrote short world/persona descriptions. INFER the most natural setting from what they did write:
 
-- If the persona sounds modern ("I'm a boy", "I'm a student", "I'm a programmer"), set the story in a MODERN, REAL-WORLD context (school, home, workplace, city street, etc.) — NOT a fantasy tavern.
-- If the persona mentions sci-fi elements (cybernetics, spaceships, AI), set it in a sci-fi world.
-- If the persona mentions magic, dragons, or medieval elements, THEN use fantasy.
-- If genuinely ambiguous, ask the user in-character (an NPC asking where they are) rather than assuming fantasy.
-
-The user's actual persona: "${campaign.userPersona}"
-The role you should play: "${campaign.aiPersona}"
-
-Adapt your narration to whatever setting makes the most sense for that persona. A boy saying "hi" to his friend should get a modern slice-of-life scene — two friends hanging out — NOT a fantasy tavern with dwarves and lutes.`);
+- A modern-sounding persona ("I'm a boy", "I'm a student", "I'm a nurse") → a modern, real-world setting (home, school, workplace, city).
+- Sci-fi elements (cybernetics, spaceships, AI) → science fiction.
+- Magic, dragons or medieval elements → fantasy.
+- Genuinely ambiguous → establish the scene through a character's natural dialogue rather than guessing wildly.`);
   }
 
-  // 2. World & Personas
   sections.push(`# THE WORLD
 
 ${campaign.worldDescription}
 
-# THE CHARACTER (the user)
+# THE PLAYER'S CHARACTER
 
 ${campaign.userPersona}
 
@@ -103,38 +118,40 @@ ${campaign.userPersona}
 
 ${campaign.aiPersona}`);
 
-  // 3. World State
-  const stateJson = worldState
-    ? JSON.stringify(worldState, null, 2)
-    : "{}";
+  const stateJson = worldState && Object.keys(worldState).length ? JSON.stringify(worldState, null, 2) : "{}";
   sections.push(`# WORLD STATE (ground truth — never contradict this)
 
 \`\`\`json
 ${stateJson}
 \`\`\`
 
-This JSON tracks the character's current state. Treat every field as fact. If the character picks up an item, it should appear in inventory. If they move, location should change. The background lorebook keeper updates this automatically — trust it.`);
+A background lorebook keeper updates this record. Treat every field as fact.`);
 
-  // 4. Retrieved Memories
-  if (memories.length > 0) {
-    const memoryBlock = memories
-      .map((m, i) => `## Memory ${i + 1} (relevance: ${(m.similarity * 100).toFixed(0)}%)
-${m.content}`)
-      .join("\n\n");
-    sections.push(`# PAST EVENTS (retrieved from memory — these happened earlier in the story)
+  const relevant = memories
+    .filter((m) => m.similarity >= MEMORY_MIN_SIMILARITY)
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+  if (relevant.length > 0) {
+    const memoryBlock = relevant
+      .map((m) => `- ${m.role === "user" ? "Player" : m.role === "assistant" ? "Story" : "Note"}: ${m.content.replace(/\s+/g, " ").trim()}`)
+      .join("\n");
+    sections.push(`# PAST EVENTS (recalled from earlier in this story, oldest first)
 
 ${memoryBlock}
 
-Reference these naturally when relevant. Do NOT say "according to your memory" — weave them into the narrative as things the character remembers or that NPCs reference.`);
+Weave these in only when they genuinely connect to the current moment.`);
   } else {
     sections.push(`# PAST EVENTS
 
-(No relevant memories retrieved. This may be the start of the story, or nothing from the past connects to this moment.)`);
+(Nothing from earlier connects strongly to this moment — or the story has just begun.)`);
   }
+
+  const length = LENGTH_GUIDE[options.responseLength ?? "medium"];
+  sections.push(`# STYLE
+
+Write ${length.words} per reply unless the moment clearly calls for less (a quick exchange of dialogue) — never pad.`);
 
   const system = sections.join("\n\n---\n\n");
 
-  // 5 + 6. Working memory as message history + current user input
   const messages: { role: MessageRole; content: string }[] = workingMemory.map((m) => ({
     role: m.role,
     content: m.content,
@@ -142,4 +159,16 @@ Reference these naturally when relevant. Do NOT say "according to your memory" �
   messages.push({ role: "user", content: userMessage });
 
   return { system, messages };
+}
+
+/** Keep the newest messages that fit within a character budget (oldest → newest). */
+export function fitWorkingMemory<T extends { content: string }>(newestFirst: T[], maxChars: number, maxCount: number): T[] {
+  const kept: T[] = [];
+  let used = 0;
+  for (const message of newestFirst.slice(0, maxCount)) {
+    if (kept.length > 0 && used + message.content.length > maxChars) break;
+    kept.push(message);
+    used += message.content.length;
+  }
+  return kept.reverse();
 }

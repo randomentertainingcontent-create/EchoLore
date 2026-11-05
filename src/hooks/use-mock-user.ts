@@ -5,6 +5,7 @@ import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { browserClient } from "@/lib/supabase";
 import { useCampaignStore } from "@/store/campaign-store";
 import { useByokStore } from "@/store/byok-store";
+import { clearDrafts } from "@/lib/drafts";
 
 interface AuthState {
   userId: string | null;
@@ -90,6 +91,7 @@ export async function signOutAccount() {
   publish({ ...snapshot, userId: null, email: null, ready: false, recovery: false, error: undefined });
   useCampaignStore.getState().reset();
   useByokStore.getState().clearKey();
+  clearDrafts();
   try {
     const { error } = await browserClient().auth.signOut({ scope: "local" });
     if (error) throw error;
