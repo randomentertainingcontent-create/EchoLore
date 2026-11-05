@@ -2,13 +2,13 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { EMBED_DIMENSIONS, EMBED_MODEL } from "@/lib/byok/headers";
+import { DEFAULT_CHAT_MODEL, DEFAULT_LORE_MODEL, EMBED_DIMENSIONS, EMBED_MODEL } from "@/lib/byok/headers";
 import type { ByokConfig } from "@/types/echolore";
 
 export const DEFAULT_BYOK: ByokConfig = {
   openrouterKey: "",
-  chatModel: "openai/gpt-oss-120b:free",
-  loreModel: "openai/gpt-oss-20b:free",
+  chatModel: DEFAULT_CHAT_MODEL,
+  loreModel: DEFAULT_LORE_MODEL,
   embedModel: EMBED_MODEL,
   embedDimensions: EMBED_DIMENSIONS,
 };

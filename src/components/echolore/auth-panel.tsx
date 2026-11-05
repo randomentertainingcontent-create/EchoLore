@@ -103,16 +103,3 @@ export function AuthPanel() {
     </section>
   );
 }
-
-export function AccountControl() {
-  const { email, userId, error, ready } = useMockUser();
-  return (
-    <div className="shrink-0 border-b border-border bg-card px-4 py-2 sm:px-6">
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <p className="min-w-0 truncate text-xs text-muted-foreground" title={email ?? userId ?? undefined}>Signed in as <span className="text-foreground">{email ?? userId}</span></p>
-        <Button variant="outline" className="h-11 shrink-0" disabled={!ready} onClick={() => void signOutAccount()}>Sign out</Button>
-      </div>
-      {error && <p role="alert" className="mt-2 break-words text-sm text-destructive">{error}</p>}
-    </div>
-  );
-}

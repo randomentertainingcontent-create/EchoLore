@@ -13,7 +13,9 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:3100",
     browserName: "chromium",
-    channel: process.env.PLAYWRIGHT_CHANNEL ?? "msedge",
+    ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH
+      ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } }
+      : { channel: process.env.PLAYWRIGHT_CHANNEL ?? "msedge" }),
     serviceWorkers: "block",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",

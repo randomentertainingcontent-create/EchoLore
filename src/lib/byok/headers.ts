@@ -9,8 +9,11 @@ export const HDR_EMBED_MODEL = "x-embed-model";
 export const HDR_EMBED_DIMENSIONS = "x-embed-dimensions";
 export const EMBED_MODEL = "openai/text-embedding-3-small";
 export const EMBED_DIMENSIONS = 1536;
+export const DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b:free";
+export const DEFAULT_LORE_MODEL = "openai/gpt-oss-20b:free";
+export const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
 
-const model = z.string().min(1).max(200).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/);
+const model = z.string().min(1).max(200).regex(MODEL_ID_PATTERN);
 const byokSchema = z.object({
   [HDR_OPENROUTER_KEY]: z.string().trim().min(1).max(512).regex(/^[\x21-\x7e]+$/),
   [HDR_CHAT_MODEL]: model,
@@ -30,12 +33,12 @@ export async function buildAuthHeaders(): Promise<{ Authorization: string }> {
 export async function buildByokHeaders(_userId: string, config: ByokConfig): Promise<ByokHeaders & { Authorization: string }> {
   const headers = byokSchema.safeParse({
     [HDR_OPENROUTER_KEY]: config.openrouterKey,
-    [HDR_CHAT_MODEL]: config.chatModel,
-    [HDR_LORE_MODEL]: config.loreModel,
+    [HDR_CHAT_MODEL]: config.chatModel.trim() || DEFAULT_CHAT_MODEL,
+    [HDR_LORE_MODEL]: config.loreModel.trim() || DEFAULT_LORE_MODEL,
     [HDR_EMBED_MODEL]: EMBED_MODEL,
     [HDR_EMBED_DIMENSIONS]: String(EMBED_DIMENSIONS),
   });
-  if (!headers.success) throw new Error("Invalid provider settings");
+  if (!headers.success) throw new Error("Your API key or a model name has unsupported characters. Check API settings.");
   return { ...headers.data, ...await buildAuthHeaders() };
 }
 

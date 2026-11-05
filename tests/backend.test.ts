@@ -87,7 +87,10 @@ test("chat rejects regeneration, invalid UUIDs and oversized inputs", () => {
   assert.equal(chatSchema.safeParse({ campaignId: "bad", message: "Hello" }).success, false);
   assert.equal(chatSchema.safeParse({ campaignId, message: "a".repeat(16001) }).success, false);
   assert.equal(chatSchema.safeParse({ campaignId, messages: [{ role: "assistant", content: "old reply" }] }).success, false);
-  assert.deepEqual(chatSchema.parse({ campaignId, trigger: "submit-message", messages: [{ role: "user", parts: [{ type: "text", text: "Hello" }] }] }), { campaignId, message: "Hello" });
+  assert.deepEqual(chatSchema.parse({ campaignId, trigger: "submit-message", messages: [{ role: "user", parts: [{ type: "text", text: "Hello" }] }] }), { campaignId, message: "Hello", options: {} });
+  assert.deepEqual(chatSchema.parse({ campaignId, message: "Hi", options: { responseLength: "long", creativity: 1.1 } }).options, { responseLength: "long", creativity: 1.1 });
+  assert.equal(chatSchema.safeParse({ campaignId, message: "Hi", options: { responseLength: "epic" } }).success, false);
+  assert.equal(chatSchema.safeParse({ campaignId, message: "Hi", options: { creativity: 9 } }).success, false);
 });
 
 test("body reader bounds actual bytes, including without content-length", async () => {
@@ -216,4 +219,64 @@ test("embedding settings and output dimensions are pinned", () => {
   assert.equal(validateEmbedding(Array(1536).fill(0)).length, 1536);
   assert.throws(() => validateEmbedding([1, 2]));
   assert.throws(() => validateEmbedding(Array(1536).fill(NaN)));
+});
+
+test("working memory keeps the newest messages within budget, oldest first", async () => {
+  const { fitWorkingMemory } = await import("../src/lib/rag/compile-prompt");
+  const newestFirst = [{ content: "d".repeat(10) }, { content: "c".repeat(10) }, { content: "b".repeat(10) }, { content: "a".repeat(10) }];
+  assert.deepEqual(fitWorkingMemory(newestFirst, 25, 16).map((m) => m.content[0]), ["c", "d"]);
+  assert.deepEqual(fitWorkingMemory(newestFirst, 1000, 3).map((m) => m.content[0]), ["b", "c", "d"]);
+  assert.equal(fitWorkingMemory([{ content: "x".repeat(50) }], 10, 16).length, 1, "always keeps the latest message");
+});
+
+test("prompt compiler filters weak memories, labels speakers and applies reply length", async () => {
+  const { compilePrompt } = await import("../src/lib/rag/compile-prompt");
+  const compiled = compilePrompt({
+    campaign: { worldDescription: "A rainy neon city full of secrets, where rival corporations fight over data and the undercity never sleeps.", userPersona: "A tired netrunner with a debt and a chrome arm.", aiPersona: "You are the Game Master who voices every character vividly." },
+    worldState: { location: "Night market" },
+    memories: [
+      { id: "1", messageId: "m1", content: "The fixer owes you a favor.", similarity: 0.8, role: "assistant", createdAt: "2026-01-02T00:00:00Z" },
+      { id: "2", messageId: "m2", content: "I bought noodles.", similarity: 0.1, role: "user", createdAt: "2026-01-01T00:00:00Z" },
+      { id: "3", messageId: "m3", content: "I promised to find Kira.", similarity: 0.5, role: "user", createdAt: "2026-01-01T00:00:00Z" },
+    ],
+    workingMemory: [],
+    userMessage: "[Direction: skip to nightfall]",
+    options: { responseLength: "short" },
+  });
+  assert.match(compiled.system, /- Player: I promised to find Kira\.\n- Story: The fixer owes you a favor\./);
+  assert.doesNotMatch(compiled.system, /noodles/);
+  assert.match(compiled.system, /1-2 tight paragraphs/);
+  assert.doesNotMatch(compiled.system, /SETTING INFERENCE/);
+  assert.deepEqual(compiled.messages.at(-1), { role: "user", content: "[Direction: skip to nightfall]" });
+});
+
+test("lore JSON extraction tolerates fences and chatter", async () => {
+  const { extractJsonObject } = await import("../src/app/api/_lib/ai-helpers");
+  assert.deepEqual(extractJsonObject('```json\n{"a":1}\n```'), { a: 1 });
+  assert.deepEqual(extractJsonObject('Here is the state: {"location":"Dock 9"} hope that helps'), { location: "Dock 9" });
+  assert.throws(() => extractJsonObject("no json here"));
+});
+
+test("provider errors become actionable messages", async () => {
+  const { APICallError } = await import("ai");
+  const { describeProviderError } = await import("../src/app/api/_lib/ai-helpers");
+  const error = (statusCode: number) => new APICallError({ message: "x", url: "https://openrouter.ai", requestBodyValues: {}, statusCode });
+  assert.match(describeProviderError(error(401)), /API key/);
+  assert.match(describeProviderError(error(402)), /credits/);
+  assert.match(describeProviderError(error(429)), /rate-limited/);
+  assert.match(describeProviderError(error(404)), /isn't available/);
+  assert.match(describeProviderError(error(503)), /having trouble/);
+  assert.match(describeProviderError(new Error("boom")), /couldn't finish/);
+});
+
+test("new route schemas bound edits and lore replacement", async () => {
+  const { campaignPatchSchema, messageEditSchema, lorePutSchema } = await import("../src/app/api/_lib/validation");
+  assert.equal(campaignPatchSchema.safeParse({}).success, false);
+  assert.equal(campaignPatchSchema.safeParse({ title: "New" }).success, true);
+  assert.equal(campaignPatchSchema.safeParse({ title: " " }).success, false);
+  assert.equal(campaignPatchSchema.safeParse({ userId: "x" }).success, false);
+  assert.equal(messageEditSchema.safeParse({ messageId: "00000000-0000-4000-8000-000000000001", content: "Hi" }).success, true);
+  assert.equal(messageEditSchema.safeParse({ messageId: "bad", content: "Hi" }).success, false);
+  assert.equal(lorePutSchema.safeParse({ state: { a: 1 } }).success, true);
+  assert.equal(lorePutSchema.safeParse({ state: [1] }).success, false);
 });

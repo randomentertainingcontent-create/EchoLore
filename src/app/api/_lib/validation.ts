@@ -39,8 +39,30 @@ export const campaignSchema = z.object({
   startingState: loreStateSchema.optional(),
 }).strict();
 
+export const RESPONSE_LENGTHS = ["short", "medium", "long"] as const;
+export type ResponseLength = (typeof RESPONSE_LENGTHS)[number];
+export const chatOptionsSchema = z.object({
+  responseLength: z.enum(RESPONSE_LENGTHS).optional(),
+  creativity: z.number().finite().min(0).max(1.5).optional(),
+}).strict();
+
+export const campaignPatchSchema = z.object({
+  title: text(120).optional(),
+  worldDescription: text(8000).optional(),
+  userPersona: text(4000).optional(),
+  aiPersona: text(4000).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "Nothing to update");
+
+export const messageEditSchema = z.object({
+  messageId: uuidSchema,
+  content: text(MAX_MESSAGE_LENGTH),
+}).strict();
+
+export const lorePutSchema = z.object({ state: loreStateSchema }).strict();
+
 export const chatSchema = z.object({
   campaignId: uuidSchema,
+  options: chatOptionsSchema.optional(),
   message: text(MAX_MESSAGE_LENGTH).optional(),
   id: z.string().max(200).optional(),
   messageId: z.string().max(200).optional(),
@@ -59,8 +81,8 @@ export const chatSchema = z.object({
   const message = body.message ?? (last?.role === "user"
     ? last.parts?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("").trim() || last.content?.trim()
     : undefined);
-  return { campaignId: body.campaignId, message };
-}).pipe(z.object({ campaignId: uuidSchema, message: text(MAX_MESSAGE_LENGTH) }));
+  return { campaignId: body.campaignId, message, options: body.options ?? {} };
+}).pipe(z.object({ campaignId: uuidSchema, message: text(MAX_MESSAGE_LENGTH), options: chatOptionsSchema }));
 
 export class RequestError extends Error {
   constructor(public status: number, message: string) { super(message); }
